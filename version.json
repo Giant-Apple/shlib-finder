@@ -1,6 +1,6 @@
 {
   "name": "shlib-finder",
-  "version": "0.0.44",
+  "version": "0.1.0",
   "build": "",
   "note": "上图馆藏查询 · 版本号唯一来源。server.py 启动时读它，经 /api/config 交给页面，只在设置面板底部显示。改功能顺手改 version。"
 }
