@@ -1,0 +1,12 @@
+{
+  "doulist_url": "https://www.douban.com/doulist/YOUR_DOULIST_ID/",
+  "lan": false,
+  "geocode": {
+    "provider": "amap",
+    "key": "Amap or Tencent Key; see README 'Two Amap keys, don't mix them up'"
+  },
+  "map": {
+    "key": "Amap Web (JS API) Key",
+    "security": "Security secret (required for Keys applied after 2021-12)"
+  }
+}

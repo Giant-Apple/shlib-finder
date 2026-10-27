@@ -1,0 +1,8 @@
+# Windows 批处理必须按原样存（GBK + CRLF）：cmd 解析中文注释不认 UTF-8，
+# 而 LF 换行会让 cmd 把下一行拼进当前行。
+# 不加这条，GitHub「Download ZIP」给到的是库里的原始字节：会被存成 LF，双击就坏。
+# diff 属性保住文本 diff，不然 .bat 会被当二进制。
+*.bat -text diff
+
+# POSIX 启动脚本在任何系统上克隆都要保持 LF，否则 bash 报 bad interpreter
+*.sh text eol=lf

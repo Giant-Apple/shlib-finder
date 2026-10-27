@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>上图馆藏查询 · 按距离查可借</title>
+<!-- 浏览器标签页的书本小图标：16/32 给标签页，180 给 iOS 主屏幕 -->
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icon-16.png">
+<!-- 手机「添加到主屏幕」后当 App 用：图标、独立窗口、状态栏配色 -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="上图馆藏">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14171a">
+<script>
+  /* 在 CSS 之前定好主题，避免暗色下先闪一下白底 */
+  (function () {
+    var t;
+    try {
+      /* 便携模式（打包产物）不读本机记录，跟着系统走；判定开关见 app.js 的 S.nostore */
+      if (localStorage.getItem('shlib.nostore') !== '1') t = localStorage.getItem('shlib.theme');
+    } catch (e) {}
+    if (t !== 'dark' && t !== 'light') {
+      t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 没有顶栏、没有标题：进页面第一眼就是定位结果和书架。
+     检索框单独做成一颗药丸，右侧的按钮各自一颗圆钮，同一高度、同一条水平轴线 -->
+<header id="bar">
+  <div class="qwrap">
+    <!-- 药丸检索：放大镜在左、清除叉在右，输入区居中，整颗框就是个 searchbox -->
+    <div class="qpill" role="search">
+      <i data-icon="search" class="qico"></i>
+      <input id="q" type="search" placeholder="ISBN 或书名" autocomplete="off" spellcheck="false"
+             aria-label="检索 ISBN 或书名" aria-expanded="false" aria-controls="sug">
+      <button type="button" class="qclear hidden" id="qClear" title="清空" aria-label="清空检索框">
+        <i data-icon="x"></i>
+      </button>
+      <button type="button" class="qgo icon-btn" id="qBtn" title="查询上图馆藏" aria-label="查询上图馆藏">
+        <i data-icon="arrow-right"></i>
+      </button>
+      <!-- 搜索推荐 / 匹配 / 记录 -->
+      <div class="sug hidden" id="sug" role="listbox" aria-label="搜索建议"></div>
+    </div>
+  </div>
+
+  <div class="bacts">
+    <!-- 定位：一个小圆点 + 地名，紧挨着定位钮。它读起来是「当前位置」，不是按钮 -->
+    <div class="loc" id="loc" role="button" tabindex="0" title="点击更改位置">
+      <span class="dot"></span>
+      <span class="txt" id="locTxt">尚未定位</span>
+    </div>
+    <button class="rbtn icon-btn" id="geoBtn" title="重新定位" aria-label="重新定位">
+      <i data-icon="locate"></i>
+    </button>
+    <!-- 亮色/暗色开关：一颗钮两个状态。图标跟着当前主题换（亮色=太阳，暗色=月亮），
+         title 写的是「点了会变成什么」，不是当前状态 -->
+    <button class="rbtn icon-btn" id="themeBtn" title="切换暗色" aria-label="切换暗色">
+      <i data-icon="sun"></i>
+    </button>
+    <button class="rbtn icon-btn" id="settingsBtn" title="设置" aria-label="设置">
+      <i data-icon="sliders"></i>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+  <aside id="aside">
+    <div class="aside-head">
+      <span class="ttl"><i class="ttl-ico" data-icon="library"></i>书架</span>
+      <span class="spacer"></span>
+      <!-- 手动加书：加进来的书单独成「手动添加」一组，不写回豆瓣书单，能随时移除 -->
+      <button class="ghost icon-btn with-lbl" id="shelfAdd" title="手动加一本书" aria-label="手动加一本书">
+        <i data-icon="plus"></i><span class="lbl">加书</span>
+      </button>
+      <button class="ghost icon-btn with-lbl" id="asideToggle" title="收起书架" aria-label="收起书架">
+        <i data-icon="chevron-left"></i><span class="lbl">收起</span>
+      </button>
+    </div>
+    <!-- 两组书单都由 renderBooks 画：上面「手动添加」，下面「豆瓣书单」 -->
+    <div class="booklist" id="bookList"></div>
+    <!-- 收起后只剩这一条：竖排标题 + 展开箭头，点一下把书架叫回来 -->
+    <button class="aside-rail" id="asideRail" title="展开书架" aria-label="展开书架">
+      <i data-icon="chevron-right"></i>
+      <i class="rail-ico" data-icon="library"></i>
+      <span class="rail-txt">书架</span>
+    </button>
+  </aside>
+
+  <section class="result" id="result">
+    <div class="empty">
+      <h2>正在准备</h2>
+      <p>读取书架、网点数据和你的位置…</p>
+    </div>
+  </section>
+</main>
+
+<!-- 设置 -->
+<div class="settings" id="settings" aria-hidden="true">
+    <div class="box" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <h2 id="settingsTitle">设置</h2>
+      <button class="x" id="setClose" type="button" aria-label="关闭设置"></button>
+
+    <!-- 局域网只读：从其他设备打开时能查书，但写配置会被服务端拒绝，这里提前说清楚 -->
+    <div class="note ro" id="setRo" hidden>
+      在其他设备上打开时，设置是只读的：可以查书、查看结果；改设置请回到运行服务的那台电脑。
+    </div>
+
+    <!-- 1 地图：宽屏下结果区背后铺不铺地图。手机上地图不铺背景，这项主要给桌面用 -->
+    <div class="grp">地图</div>
+
+    <div class="field">
+      <label>默认展开地图</label>
+      <div class="seg" id="mapSeg">
+        <span class="seg-thumb" aria-hidden="true"></span>
+        <button type="button" data-map-val="1">展开</button>
+        <button type="button" data-map-val="0">收起</button>
+      </div>
+    </div>
+
+    <!-- 2 豆瓣书单地址 -->
+    <div class="grp">豆瓣书单地址</div>
+
+    <div class="field">
+      <label for="setDoulist">书单页网址</label>
+      <input id="setDoulist" placeholder="https://www.douban.com/doulist/xxxx/">
+    </div>
+
+    <!-- 3 地图 API Key -->
+    <div class="grp">地图 API Key</div>
+
+    <div class="keybox">
+      <div class="field">
+        <!-- 两把 Key 的名字以前叫「Web 服务」/「Web 端」，中文里分不出来，提示里还常被统
+             统称成「地图 Key」，结果距离/骑行缺的是 Web 服务那把、人却去填地图那格。
+             label 改成按用途说，一把管地址换算和骑行，一把管浏览器画地图 -->
+        <label for="providerBtn">地址与距离（Web 服务 Key）</label>
+        <div class="row">
+          <div class="select w-narrow" id="providerSelect">
+            <input type="hidden" id="setProvider" value="amap">
+            <button type="button" class="select-btn" id="providerBtn"
+                    aria-haspopup="listbox" aria-expanded="false" aria-controls="providerMenu">
+              <span id="providerVal">高德</span>
+              <i data-icon="chevron-down"></i>
+            </button>
+            <div class="select-menu" id="providerMenu" role="listbox" aria-label="地址与距离的服务商" hidden>
+              <button type="button" class="select-opt" role="option" data-v="amap"
+                      aria-selected="true" tabindex="-1">
+                <span>高德</span><i data-icon="check"></i>
+              </button>
+              <button type="button" class="select-opt" role="option" data-v="qq"
+                      aria-selected="false" tabindex="-1">
+                <span>腾讯</span><i data-icon="check"></i>
+              </button>
+            </div>
+          </div>
+          <input id="setKey" type="password" autocomplete="off" placeholder="Key">
+          <button class="sm" type="button" id="keyTest">测试</button>
+        </div>
+      </div>
+
+      <div class="field last">
+        <label for="setMapKey">地图背景（Web 端 JS API Key）</label>
+        <input id="setMapKey" type="password" autocomplete="off" placeholder="Key">
+        <input id="setMapSec" type="password" autocomplete="off"
+               placeholder="安全密钥" class="mt">
+      </div>
+    </div>
+
+    <!-- 4 从其他设备访问：默认关，开启后同一网络里的手机 / 另一台电脑能打开（只读） -->
+    <div class="grp">从其他设备访问</div>
+
+    <div class="field last" id="lanField">
+      <div class="lan-switch">
+        <div class="lan-switch-txt">
+          <label id="lanLabel">让同一网络里的其他设备打开</label>
+          <div class="stat" id="lanStat">未开启，只有这台电脑能访问</div>
+        </div>
+        <button type="button" class="tgl" id="lanToggle" aria-pressed="false"
+                aria-labelledby="lanLabel">
+          <span class="tgl-track"><span class="tgl-knob"></span></span>
+        </button>
+      </div>
+      <!-- 开关保存即生效：服务收到保存请求会当场换监听地址（server.py 的 apply_lan_binding），
+           所以这里不再有「要不要重启」那条问句 -->
+      <div class="lan-row" id="lanShare" hidden>
+        <div id="lanQr" class="lan-qr" hidden></div>
+        <div class="lan-txt">
+          <div id="lanUrl" class="lan-url">—</div>
+          <div class="lan-note" id="lanRo" hidden>其他设备上只能查看：可以查书、查看结果；修改设置请回到这台电脑。</div>
+        </div>
+      </div>
+      <div class="lan-note" id="lanHint">其他设备要和这台电脑在同一个网络里；手机就是连同一个 Wi-Fi。</div>
+    </div>
+
+    <!-- 5 关于 -->
+    <div class="grp">关于</div>
+
+    <div class="ver-row">
+      <div class="ver" id="setVer">上图馆藏查询 v—</div>
+      <button class="sm" type="button" id="restartSrv" hidden
+              title="重启本地服务，让 server.py / version.json 的改动生效">重启服务</button>
+    </div>
+
+    <div class="foot">
+      <button id="setCancel">关闭</button>
+      <button class="primary" id="setSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 手机全屏地图：桌面有背景地图，窄屏放不下，改为按需铺满整屏 -->
+<div class="map-sheet" id="mapSheet" aria-hidden="true">
+  <div class="ms-panel" role="dialog" aria-modal="true" aria-labelledby="msTitle">
+    <div class="ms-head">
+      <h2 id="msTitle">馆藏地图</h2>
+      <div class="ms-acts">
+        <button type="button" class="ms-loc" id="msRecenter" title="回到我的位置" aria-label="回到我的位置">
+          <i data-icon="locate"></i>
+        </button>
+        <button type="button" class="ms-close" id="mapSheetClose" aria-label="关闭地图">
+          <i data-icon="x"></i>
+        </button>
+      </div>
+    </div>
+    <div class="ms-map" id="msMap"></div>
+    <div class="ms-legend">
+      <i class="mdot ok"></i>有可借<i class="mdot no"></i>借不到<span id="msLegendMe"><i class="mdot me"></i>我的位置</span>
+    </div>
+  </div>
+</div>
+
+<!-- 手动加书：加进来的书归「手动添加」这一组，不写回豆瓣书单 -->
+<div class="dlg" id="addDlg" aria-hidden="true">
+  <div class="dlg-box" role="dialog" aria-modal="true" aria-labelledby="addTitle">
+    <h2 id="addTitle">手动加书</h2>
+    <div class="field">
+      <label for="addInput">ISBN 或书名</label>
+      <input id="addInput" autocomplete="off" placeholder="9787302685821 / 置身事内">
+    </div>
+    <div class="dlg-hint" id="addHint">加进「手动添加」这一组，不会改动豆瓣书单。输入书名会先列出上图的版本，选定一本再查馆藏</div>
+    <!-- 按书名匹配到多个版本时列在这里，点一个再查 -->
+    <div class="dlg-cands" id="addCands" hidden></div>
+    <div class="dlg-foot">
+      <button type="button" id="addCancel">取消</button>
+      <button type="button" class="primary" id="addOk">加入并查询</button>
+    </div>
+  </div>
+</div>
+
+<!-- 地址输入：页面内对话框，替掉原生 prompt（原生弹窗没法沿用配色，内嵌浏览器里还可能被拦掉） -->
+<div class="dlg" id="addrDlg" aria-hidden="true">
+  <div class="dlg-box" role="dialog" aria-modal="true" aria-labelledby="addrTitle">
+    <h2 id="addrTitle">设置位置</h2>
+    <div class="field">
+      <label for="addrInput">地址或地点名</label>
+      <input id="addrInput" autocomplete="off" placeholder="淮海中路1555号 / 人民广场">
+    </div>
+    <!-- 手填过的地址：手机上没有定位，常用地址点一下就设好 -->
+    <div class="addr-recent" id="addrRecent" hidden></div>
+    <!-- 提示原句写在 app.js 的 ADDR_HINT，打开对话框时填进来（查位置和报错会临时改写，
+         这里留空是为了同一句不留两份） -->
+    <div class="dlg-hint" id="addrHint"></div>
+    <div class="dlg-foot">
+      <button type="button" id="addrCancel">取消</button>
+      <button type="button" class="primary" id="addrOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<script src="shlib.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

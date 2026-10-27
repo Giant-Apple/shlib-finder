@@ -1,0 +1,2689 @@
+/* 正文用系统默认字体栈：中文优先苹方/微软雅黑，英文走系统 UI 字体 */
+
+/* --aside-w 注册成 <length>：类切换（292 ↔ 36px）时变量本身可过渡，
+   grid 列宽、地图背景层 left、结果列左沿都读它，于是整页一起平滑收/放；
+   不注册的话这些值只会在切换那一刻瞬跳。不支持的浏览器忽略本条，等同瞬切（现状） */
+@property --aside-w {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 292px;
+}
+/* 清透质感（轻玻璃拟态 + 柔性拟态）：
+   - 面板一律半透明白 + backdrop 磨砂，柔和分层阴影，细白描边模拟玻璃厚度
+   - 底层铺淡彩渐变环境光（body::before），玻璃有东西可透才显质感
+   - 原则「不抢内容」：模糊半径和透明度都收着，文字照旧用 --ink 系 */
+:root {
+  --bg: #f3f6fa;
+  --panel: rgba(255, 255, 255, .66);
+  /* 顶栏零件（药丸/三枚圆钮/定位条）专用浓度：比 --panel 浓一档。
+     书单列滚到顶栏后面时，.66 的磨砂下还能透出封面和文字的色影，
+     人民广场那串字又会直接压在内容上——用户截图指出「内容混合」。
+     只提顶栏这三个零件，不动 --panel（aside/卡片/下拉都共用 .66，一起动会动全局） */
+  --panel-top: rgba(255, 255, 255, .82);
+  --panel-2: rgba(255, 255, 255, .48);
+  /* 浮层专用（搜索联想 / 搜索记录下拉）：它们压在整屏封面图上，
+     --panel 的 .66 会把封面颜色透上来，字都读不清，所以单独浓一档 */
+  --panel-pop: rgba(255, 255, 255, .97);
+  --panel-solid: #fbfcfe;          /* 不支持 backdrop-filter 时的回退底 */
+  --chip: rgba(20, 44, 68, .055);
+  --hover: rgba(20, 44, 68, .05);
+  --hover-2: rgba(20, 44, 68, .09);
+  --line: rgba(20, 44, 68, .1);
+  --line-strong: rgba(20, 44, 68, .18);
+  /* 玻璃边缘：1px 亮描边 + 内侧顶部高光，模拟玻璃厚度 */
+  --glass-line: rgba(255, 255, 255, .75);
+  --glass-sheen: rgba(255, 255, 255, .85);
+  --ink: #1a1d21;
+  --ink-2: #4a5158;
+  /* 淡一档仍要过 AA：#868e96 在 #f3f6fa 上只有 3.06:1，
+     时间、说明、占位这些高频小字同样得读得清。这一档约 4.78:1 */
+  --ink-3: #666e76;
+  --brand: #0a5c8a;
+  --brand-soft: rgba(10, 122, 178, .1);
+  --brand-line: rgba(10, 122, 178, .32);
+  --on-brand: #ffffff;
+  /* 「我的位置」单独一支橙：地图上要一眼找到自己，跟馆标记的蓝同色就淹没了。
+     同一个东西在右上角定位点上也是这一个色，两处必须同源 */
+  --me: #e8590c;
+  --me-soft: rgba(232, 89, 12, .22);
+  --warn: #9a5b00;
+  --warn-soft: rgba(217, 119, 6, .12);
+  --no: #8c2f2f;
+  --scrim: rgba(16, 24, 40, .35);
+  /* 控件尺寸：按 shadcn/ui 的 h-9 / h-8 / h-10 / size-9 换算。
+     全站按钮、输入框、下拉、分段、开关只读这四个数，别再各处写裸像素 */
+  --ctl-sm: 32px;
+  --ctl: 36px;
+  --ctl-lg: 40px;
+  --ctl-touch: 44px;
+  /* 圆角三档：输入与菜单项 8、浮层与列表块 12、面板 16；按钮一律胶囊 999 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  /* 聚焦环：跟检索药丸的 3px 柔光同源，按钮/输入共用一套 */
+  --ring: 0 0 0 3px var(--brand-soft);
+  /* 柔光三层阴影：贴地一层、环境一层、远端大而极淡的一层——只拉开层级，不压出「重」感 */
+  --shadow: 0 1px 2px rgba(31, 45, 61, .04), 0 4px 12px rgba(31, 45, 61, .05), 0 16px 40px rgba(31, 45, 61, .05);
+  --shadow-float: 0 2px 6px rgba(31, 45, 61, .06), 0 12px 32px rgba(31, 45, 61, .1), 0 32px 72px rgba(31, 45, 61, .08);
+  /* 分段控件里那块「浮起来的选中项」：只借一点点投影，别让它变成一张卡片 */
+  --seg-thumb: var(--panel-solid);
+  --thumb-shadow: 0 1px 2px rgba(31, 45, 61, .16), 0 1px 1px rgba(31, 45, 61, .06);
+  color-scheme: light;
+}
+
+/* 暗色：只换变量，别在组件里写死颜色。玻璃规则同亮色：半透明深板 + 微弱亮描边 */
+html[data-theme="dark"] {
+  --bg: #101318;
+  --panel: rgba(30, 35, 42, .62);
+  --panel-top: rgba(30, 35, 42, .78);
+  --panel-2: rgba(38, 44, 52, .5);
+  --panel-pop: rgba(30, 35, 42, .97);
+  --panel-solid: #1c2026;
+  --chip: rgba(255, 255, 255, .07);
+  --hover: rgba(255, 255, 255, .06);
+  --hover-2: rgba(255, 255, 255, .1);
+  --line: rgba(255, 255, 255, .1);
+  --line-strong: rgba(255, 255, 255, .18);
+  --glass-line: rgba(255, 255, 255, .12);
+  --glass-sheen: rgba(255, 255, 255, .07);
+  --ink: #e7e9ec;
+  --ink-2: #b3bac1;
+  --ink-3: #828a92;
+  --brand: #6cb6dd;
+  --brand-soft: rgba(108, 182, 221, .14);
+  --brand-line: rgba(108, 182, 221, .38);
+  --on-brand: #0d2029;
+  /* 暗色下地图是「幻影黑」，橙要更亮一档才压得住 */
+  --me: #ff922b;
+  --me-soft: rgba(255, 146, 43, .26);
+  --warn: #dfa95c;
+  --warn-soft: rgba(223, 169, 92, .13);
+  --no: #e5918c;
+  --scrim: rgba(0, 0, 0, .58);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 12px rgba(0, 0, 0, .25), 0 16px 40px rgba(0, 0, 0, .22);
+  --shadow-float: 0 2px 6px rgba(0, 0, 0, .35), 0 12px 32px rgba(0, 0, 0, .35), 0 32px 72px rgba(0, 0, 0, .3);
+  /* 暗色下 panel-solid 比 chip 托盘更暗，直接拿来当滑块会看成「凹槽」；
+     往亮处抬一档，才有「浮起来」的方向感 */
+  --seg-thumb: #343a44;
+  --thumb-shadow: 0 1px 2px rgba(0, 0, 0, .45);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.55 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 环境光：三团淡彩极光斑固定铺在视口底层，面板的磨砂透的就是它。
+   fixed + z-index:-1 不参与滚动也不接鼠标；色斑务必淡（≤.5），压暗了正文对比度就塌了 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42rem 30rem at 8% -6%, rgba(125, 180, 225, .4), transparent 62%),
+    radial-gradient(38rem 28rem at 96% 12%, rgba(168, 148, 224, .28), transparent 64%),
+    radial-gradient(44rem 32rem at 55% 108%, rgba(140, 208, 178, .3), transparent 62%);
+}
+html[data-theme="dark"] body::before {
+  background:
+    radial-gradient(42rem 30rem at 8% -6%, rgba(56, 98, 138, .3), transparent 62%),
+    radial-gradient(38rem 28rem at 96% 12%, rgba(92, 76, 138, .26), transparent 64%),
+    radial-gradient(44rem 32rem at 55% 108%, rgba(48, 108, 88, .24), transparent 62%);
+}
+
+/* 玻璃面板公共质感：磨砂 + 亮描边 + 顶部高光。各组件只补自己的圆角/阴影，
+   都从这里拿背景，保证「透多少」全局一致 */
+aside, .settings .box, .iw, .map-legend {
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  border: 1px solid var(--glass-line);
+}
+
+/* 不支持 backdrop-filter 的老浏览器：退回近实色底，别让文字压在色斑上。
+   暗色那组选择器特异性更高，得一起写，不然暗色下回退不生效 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root, html[data-theme="dark"] { --panel: var(--panel-solid); --panel-2: var(--panel-solid); --panel-top: var(--panel-solid); --panel-pop: var(--panel-solid); }
+  .card, aside, .settings .box, .iw, .map-legend { border-color: var(--line); }
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+a { color: var(--brand); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.hidden { display: none !important; }
+
+/* ---------------------------------------------------------------- 头部 */
+
+/* 没有一体化顶栏、没有标题：只在视口顶上浮着一排东西——一颗药丸检索，右边两颗圆钮。
+   头部本身不画底色、不画分隔线（画了就又变回「一条顶栏」），靠药丸和圆钮自己的
+   玻璃底跟内容分开。fixed 不占布局高度，两列滚动区各自用 --hdr-h 让位 */
+/* 头部这条横贯整个视口，但视觉上只有药丸和右侧两颗圆钮。
+   让它整体不吃事件、只有里面的零件吃：否则书单移到顶端后，最上面一截会被一条
+   透明的头部盒子挡住，点不到也划不动 */
+header {
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+}
+header > * { pointer-events: auto; }
+
+/* 药丸 + 定位：同一组。min-width:0 让它能真的被压缩，否则内部输入框撑住不肯缩 */
+.qwrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 桌面（>860，跟下面单列断点对齐）：药丸在视口正中，右边一簇「地名 + 两颗圆钮」。
+   三列布局：左右各 1fr 把中间那列按在正中，左列空着——这才是「水平居中」，
+   不是「在两个东西之间居中」 */
+@media (min-width: 861px) {
+  header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    column-gap: 10px;
+  }
+  .qwrap { grid-column: 2; flex: none; }
+  .bacts { grid-column: 3; justify-self: end; justify-content: flex-end; max-width: 100%; }
+  /* 右簇零件（地名 + 三颗圆钮）间距全站统一 8px：858 这档最挤，靠 .loc 自己截断让位 */
+  .bacts { gap: 8px; }
+}
+
+/* 药丸检索：整颗框就是一个搜索框——放大镜在左、清除叉和「去查」圆钮在右，
+   中间是输入区。高度 40 和右边的圆钮一致，视觉上是一排同高的东西 */
+.qpill {
+  position: relative;          /* 下拉用它定位 */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 420px;
+  width: 420px;
+  height: var(--ctl-lg);
+  padding: 0 4px 0 12px;
+  border-radius: 999px;
+  background: var(--panel-top);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 2px 8px rgba(31, 45, 61, .06);
+  transition: border-color .14s, box-shadow .14s;
+}
+/* 聚焦：描边换成品牌色 + 一圈很淡的光晕，不加粗边框（加粗会让药丸抖一下） */
+.qpill:focus-within {
+  border-color: var(--brand-line);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 0 0 3px var(--brand-soft), 0 2px 8px rgba(31, 45, 61, .08);
+}
+.qpill .qico {
+  flex: none;
+  color: var(--ink-3);
+  transition: color .14s;
+}
+.qpill .qico .ic { width: 16px; height: 16px; }
+.qpill:focus-within .qico { color: var(--brand); }
+/* 输入框自己不带边框和底色：它就是药丸里的一段空白 */
+.qpill input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  outline: none;
+  color: var(--ink);
+}
+.qpill input::placeholder { color: var(--ink-3); }
+/* 搜索框原生的清除叉会跟自己的叉叠在一起，去掉 */
+.qpill input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* 清除叉：有字才出现。做成小圆点，跟「去查」那颗拉开一档 */
+.qpill .qclear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--chip);
+  color: var(--ink-3);
+}
+.qpill .qclear:hover:not(:disabled) { background: var(--hover-2); color: var(--ink); }
+.qpill .qclear .ic { width: 12px; height: 12px; stroke-width: 2.4; }
+/* 「去查」：药丸右端嵌着的一颗实心小圆钮，比圆钮小两号，免得抢过设置钮 */
+.qpill .qgo {
+  flex: none;
+  width: var(--ctl-sm); height: var(--ctl-sm);
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.qpill .qgo:hover:not(:disabled) { background: var(--brand); color: var(--on-brand); }
+.qpill .qgo .ic { width: 16px; height: 16px; }
+
+/* 右侧一簇：地名 + 两颗圆钮（定位、设置）。药丸同高 40，圆钮是正圆、玻璃底 */
+.bacts { display: flex; align-items: center; gap: 8px; flex: none; min-width: 0; }
+.rbtn {
+  width: var(--ctl-lg); height: var(--ctl-lg);
+  /* 圆钮不许被压扁：窗口窄的时候要缩的是地名，不是这两颗圆 */
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-line);
+  background: var(--panel-top);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  color: var(--ink-2);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 2px 8px rgba(31, 45, 61, .06);
+  transition: background .12s, color .12s, border-color .12s, box-shadow .12s;
+}
+.rbtn:hover:not(:disabled) {
+  background: var(--hover-2);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 3px 12px rgba(31, 45, 61, .1);
+}
+.rbtn .ic { width: 16px; height: 16px; }
+/* 药丸里那颗「去查」和圆钮共用的圆钮基类：图标居中由 .icon-btn 负责 */
+.rbtn.icon-btn:hover:not(:disabled) { background: var(--hover-2); color: var(--ink); }
+
+/* 不支持 backdrop-filter 的老浏览器：退回近实色底，别让文字压在色斑上 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .qpill, .rbtn, .sug { background: var(--panel-solid); border-color: var(--line); }
+}
+
+.spacer { flex: 1; }
+
+/* 定位：一颗小圆点 + 地名，没有边框——它读起来是「当前位置」，不是按钮。
+   位置在右侧一簇的最前面，紧挨着定位钮（挤的时候先压它，两颗钮不缩） */
+/* 「人民广场」定位条：一颗点 + 地名，读起来是「当前位置」不是按钮，但要有底——
+   它以前完全透明（只有 hover 才出底），书单列滚到顶栏后面时这串字直接压在
+   封面和书名上，用户截图指出「内容混合」。底子跟圆钮同款同浓度 */
+.loc {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 190px;
+  /* 高度跟同行三枚圆钮（.rbtn 40px）拉齐：以前 30px 矮一截，一排东西高低不齐。
+     宽度不写死：flex 0 1 auto 让它跟着地名长短自适应，超长由 .txt 截断出省略号 */
+  height: var(--ctl-lg);
+  padding: 0 12px 0 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: var(--panel-top);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 2px 8px rgba(31, 45, 61, .06);
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s, color .12s;
+}
+.loc:hover { background: var(--hover); color: var(--ink); }
+.loc:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 1px; }
+.loc .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ink-3); flex: none;
+  transition: background .16s;
+}
+.loc.on .dot { background: var(--me); }
+.loc .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* ---------------------------------------------------------------- 按钮 */
+
+/* 规格对齐 shadcn/ui Button：默认 h-9（36）/ px-4（16）/ text-sm（14）/ font-medium。
+   形状沿用本项目的胶囊：带字的 999、纯图标的等宽等高自然成正圆 */
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: var(--ctl);
+  padding: 0 16px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s, box-shadow .12s;
+  white-space: nowrap;
+}
+button:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: var(--ring);
+}
+button:hover:not(:disabled) { background: var(--hover-2); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--on-brand);
+}
+/* 通用 button:hover 的灰底（0,2,1）打得掉 button.primary（0,1,1），
+   所以主按钮的 hover 必须同样带上 :hover:not(:disabled)，把品牌色底守住，
+   否则白字会压在浅灰上看不见（2026-10-22 用户截图指出）。
+   压暗用 color-mix 而不是 filter：filter 会把白字一起变灰 */
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand) 90%, var(--ink));
+  border-color: color-mix(in srgb, var(--brand) 90%, var(--ink));
+}
+button.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+button.ghost:hover:not(:disabled) { background: var(--hover); }
+/* 小号：h-8（32）/ px-3（12）/ 13px；纯图标时是 32 见方的圆 */
+button.sm { height: var(--ctl-sm); padding: 0 12px; font-size: 13px; }
+button.sm.icon-btn { width: var(--ctl-sm); padding: 0; }
+/* 书单头部的图标按钮：h-8 圆钮、透明底，hover 才浮一层 */
+.aside-head button.icon-btn {
+  width: var(--ctl-sm);
+  height: var(--ctl-sm);
+  color: var(--ink-3);
+}
+.aside-head button.icon-btn .ic { width: 16px; height: 16px; }
+/* 文字标签默认藏：宽屏有 title 悬停就够，文字是重复信息。≤640px 触屏看不到 title，
+   才显示（见文件末尾那条 media）——按钮从 32px 圆点变成带字小胶囊 */
+.aside-head button.icon-btn .lbl { display: none; }
+button.wide { width: 100%; }
+/* ---------------------------------------------------------------- 搜索下拉 */
+
+/* 挂在药丸下面：跟药丸同宽（最小 320，窄屏才跟着缩），浮在内容上面。
+   里面只有两种行：可点的建议（.sg）和分组标题（.sug-head） */
+.sug {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  min-width: 320px;
+  z-index: 30;
+  padding: 4px;
+  border-radius: var(--r-md);
+  background: var(--panel-pop);
+  -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  backdrop-filter: blur(22px) saturate(1.7);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), var(--shadow-float);
+  max-height: min(68vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sug-head {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: .2px;
+}
+/* 版本查询的加载 / 失败 / 空结果：不占一行高度，跟建议行同样的左内边距 */
+.sg-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.sg-note .spin { width: 12px; height: 12px; border-width: 2px; }
+.sg-note.err { color: var(--warn); background: var(--warn-soft); border-radius: var(--r-sm); }
+/* 一条建议：图标 + 书名 +（作者·ISBN）。书名抢宽度，右侧次要信息自己截断 */
+.sg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--ctl);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 400;
+}
+.sg .ic { width: 16px; height: 16px; color: var(--ink-3); flex: none; }
+.sg .sg-t {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sg .sg-s {
+  flex: 0 1 auto;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+/* 上图版本那条建议：两行——书名一行，作者/出版社/年份/ISBN 一行。
+   版本靠 ISBN 区分，不能因为单行宽度不够把它截掉。
+   行高必须自己写：全局 button 是 line-height:1（给单行胶囊按钮用的），
+   两行文本继承它就会把上下两行贴成「叠字」，光加内边距救不回来 */
+.sg.ed {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 3px 9px;
+  height: auto;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+.sg.ed .ic { grid-row: 1 / 3; margin-top: 2px; }
+.sg.ed .sg-t,
+.sg.ed .sg-s { max-width: 100%; }
+.sg.ed .sg-s { font-size: 11px; }
+/* 回车提示：只在「去上图查」那条上出现，提醒键盘能直接确认 */
+.sg .sg-k {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 16px;
+}
+/* 高亮：鼠标划过和键盘上下共用这一个类，任何时刻只有一条亮 */
+.sg.hi, .sg:hover:not(:disabled) { background: var(--hover); }
+.sg.hi .ic, .sg:hover:not(:disabled) .ic { color: var(--brand); }
+/* 「去上图查」那条：跟上面的书单匹配隔一道细线，读起来是「另外一件事」 */
+.sg.go { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 var(--r-sm) var(--r-sm); }
+.sg.go .sg-t b { font-weight: 600; color: var(--ink); }
+/* 清空记录：靠底部、颜色更淡——是收尾动作，不该跟正经结果一样显眼 */
+.sg.clr { color: var(--ink-3); font-size: 13px; height: var(--ctl-sm); }
+.sg.clr:hover:not(:disabled) { color: var(--ink); }
+.sg.clr:hover:not(:disabled) .ic { color: var(--ink); }
+/* 最近搜索一行：左边是可点的记录，右边单独一个叉 */
+.sg-row { display: flex; align-items: center; gap: 2px; }
+.sg-row .sg { flex: 1 1 auto; width: auto; min-width: 0; }
+.sg-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ctl-sm); height: var(--ctl-sm);
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  /* 平时不显示，划过那一行才浮出来——记录条不该一眼全是叉 */
+  opacity: 0;
+  transition: opacity .12s, background .12s, color .12s;
+}
+.sg-row:hover .sg-x, .sg-x:focus-visible { opacity: 1; }
+.sg-x:hover:not(:disabled) { background: var(--hover-2); color: var(--ink); }
+.sg-x .ic { width: 14px; height: 14px; }
+/* 手机没有 hover：叉常显 */
+@media (hover: none) { .sg-x { opacity: .55; } }
+
+/* ---------------------------------------------------------------- 图标 */
+
+/* 全站图标统一走 Lucide（24×24 线描）。尺寸只在这里定，别在 HTML/SVG 属性上写宽高：
+   换位置要改大小，属性上写死就盖不掉了。
+   老图标是 16×16 的画布、stroke 1.4~1.7；换成 24×24 + stroke 2 后，视觉粗细与旧版相当，
+   所以下面的像素尺寸沿用原来的（14~15px），看起来不会突然变粗或变细。 */
+/* index.html 里 <i data-icon="xxx"> 是图标占位，由 app.js 填成 SVG。
+   它在被填上之前是空的行内元素：去掉斜体、行高和基线空隙，别让按钮先抖一下 */
+i[data-icon] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+  line-height: 0;
+  flex: none;
+}
+.ic {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  /* 线描图标在深色底上略细，加一点描边像素对齐的优化 */
+  shape-rendering: geometricPrecision;
+}
+/* 只读给读屏：图标替代文字后，语义不能跟着丢 */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* 书单头部那几个按钮，图标跟全站统一 16 */
+button.icon-btn .ic { width: 16px; height: 16px; }
+
+/* 图标按钮：盒子由尺寸 token 撑，图标居中；底色块和图标必然同心。
+   尺寸不写死在这里，由各处的类（.rbtn / .sm / .toolbar / .aside-head）给 */
+button.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0;
+  line-height: 0;
+}
+/* 带文字的那种（「加书」「收起」）行高要还回去，否则文字会跟图标挤在一起 */
+button.icon-btn.with-lbl { line-height: 1.4; }
+button.icon-btn:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+button.icon-btn.busy svg { animation: sp .9s linear infinite; }
+/* 主按钮 + 图标：颜色得听 .primary 的，否则被上面的灰字规则盖掉，白图标变深灰 */
+button.primary.icon-btn { color: var(--on-brand); }
+button.primary.icon-btn:hover:not(:disabled) { color: var(--on-brand); background: var(--brand); }
+
+button.icon-btn.busy:disabled { opacity: .85; }
+
+/* 并列字段的竖线分隔符：比正文淡一档，只做分栏不抢内容 */
+.sep {
+  color: var(--ink-3);
+  opacity: .45;
+  margin: 0 .42em;
+  font-weight: 400;
+  user-select: none;
+}
+
+/* ---------------------------------------------------------------- 布局 */
+
+/* 两列：书单 292 固定在左、结果区拿走剩下的。整个 main 在视口里，两列各自内滚——
+   整页滚的话，书单会跟着结果区一起被卷走，切换书时得先滚回来 */
+main {
+  display: grid;
+  grid-template-columns: var(--aside-w, 292px) minmax(0, 1fr);
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+  /* 书单栏宽度只在这里写一次：栅格和背景地图的左边界（.map-bg 的 left）都读它 */
+  --aside-w: 292px;
+  /* 结果列表那块面板的宽度：面板自己读它，地图遮罩也读它（左边那道淡出要对齐面板右沿） */
+  --list-w: clamp(360px, 40vw, 520px);
+  /* 收起/展开书单时列宽平滑收放（292 ↔ 36px）：注册过的 --aside-w 可过渡，
+     地图层 left、结果列左沿跟着一起动，不再是整页跳一下 */
+  transition: --aside-w .22s ease;
+}
+
+aside {
+  /* 背景/描边来自顶部的玻璃公共规则（磨砂 + 亮边），这里只管布局 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* 替头部让位：头部是 fixed 的，背景跟着一起铺到视口顶，内容仍从药丸下面开始。
+   放在书单栏而不是 body，是因为这块留白属于侧栏自己的画廊，不是整页的边距。
+   注意只能给 #aside：地图那块也是 <aside>，跟着让位的话它自己顶上就多一条空白 */
+/* 书单从顶端开始：头部那条虽然在顶上，但它左半（书单这一列）本来就是空的，
+   整条让出 --hdr-h 只会白掉一块。留 8px 呼吸位就够 */
+#aside { padding-top: 8px; }
+/* 收起成竖条时没有内容要避让，竖条居中到整条高度上 */
+main.aside-min #aside { padding-top: 0; }
+
+/* 头部两排：第一排标题 + 两个图标按钮，第二排抓取时间。
+   时间单独一行是为了让第一排只剩「豆瓣书单」四个字和按钮，读起来干净；
+   它自己比标题淡一档、小一档，扫一眼就知道那是来路不是重点 */
+.aside-head {
+  padding: 12px 12px 4px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.aside-head .ttl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  flex: none;
+}
+/* 书架标题前用「藏书」图标：豆瓣 favicon 下移到豆瓣书单那一组，
+   免得整列看起来仍然只是一份豆瓣书单 */
+.aside-head .ttl-ico {
+  display: inline-flex;
+  width: 16px; height: 16px;
+  color: var(--brand);
+}
+.aside-head .ttl-ico .ic { width: 16px; height: 16px; }
+
+.booklist {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+}
+
+/* 书架分组：手动添加 / 豆瓣书单。来源写在组标题上，行内不再重复「豆瓣/手动」 */
+.shelf-grp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.shelf-grp:first-child { padding-top: 2px; }
+.sgrp-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px; height: 16px;
+  flex: none;
+}
+.sgrp-ico .ic { width: 14px; height: 14px; color: var(--brand); }
+.sgrp-ico .dblogo { width: 14px; height: 14px; }
+.sgrp-name { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.sgrp-n { font-variant-numeric: tabular-nums; }
+/* 组标题右侧的动作图标（改豆瓣书单地址）：给一枚 28×22 的扁盒子当悬停区。
+   不给尺寸的话 hover 底色正好等于 16px 图标本身，竖着一条、比例怪，也像不可点 */
+.shelf-grp button.icon-btn {
+  width: 28px;
+  height: 22px;
+  border-radius: 7px;
+  color: var(--ink-3);
+}
+.shelf-grp button.icon-btn .ic { width: 15px; height: 15px; }
+.shelf-grp button.icon-btn:hover { color: var(--ink); }
+/* 组内提示（加载 / 没配书单 / 重抓失败）：一行小字，不占一整本书的高度 */
+.shelf-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 2px 8px 6px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.shelf-note.err { color: var(--warn); background: var(--warn-soft); }
+/* 两份书单都空时的居中空态：给两个能直接动手的入口 */
+.shelf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--ink-3);
+}
+.se-ico { display: inline-flex; width: 32px; height: 32px; }
+.se-ico .ic { width: 28px; height: 28px; }
+.shelf-empty p { margin: 0; font-size: 12px; }
+.se-acts { display: flex; gap: 6px; margin-top: 2px; }
+
+.book {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  border: 1px solid transparent;
+  align-items: start;
+  transition: background .14s ease;
+}
+.book:hover { background: var(--hover); }
+/* 选中态用全站「把它拿起来」那块语言：分段控件的滑块就是一块 --seg-thumb 底
+   + --thumb-shadow 凸起，书架选中的书照画。以前是 brand-soft 底 + brand-line 描边，
+   读着像 hover 没走干净；品牌色也留给真正可点的链接，不用来标选中
+   （2026-10-26 用户定 A3）。
+   浅色下 --seg-thumb 跟玻璃面板只差 1–3 个 RGB 级，阴影又只往下落，
+   上沿和背景几乎分不开；加一圈 --line-strong 的头发线把选中卡「拎」出来。
+   暗色 --seg-thumb (#343a44) 跟面板 (#2a2f38) 差得够，hairline 也照画，
+   不影响暗色观感——同一条规则、两种主题都成立 */
+.book.active {
+  background: var(--seg-thumb);
+  border-color: transparent;
+  box-shadow: var(--thumb-shadow), 0 0 0 1px var(--line-strong);
+}
+/* 手动加的书：右侧多一列放「移除」。以前左侧还画了一道品牌色竖线标来源，
+   撤掉了——分组标题「手动添加」和这颗「移除」已经把来源说过两遍，
+   而且按全站配色规矩，品牌色只留给可点和选中，不该拿来标一类内容 */
+.book.adhoc {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  column-gap: 8px;
+}
+/* 移除：常驻但压得很淡，悬停才实起来；触屏没有悬停也看得见、点得到 */
+.bk-x {
+  align-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  margin-top: -1px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  opacity: .45;
+  cursor: pointer;
+  flex: none;
+  transition: opacity .12s, background .12s, color .12s;
+}
+.book:hover .bk-x, .bk-x:focus-visible { opacity: 1; }
+.bk-x:hover { background: var(--hover-2); color: var(--ink); }
+.bk-x .ic { width: 14px; height: 14px; }
+.book .cover {
+  width: 38px; height: 54px; object-fit: cover; border-radius: 4px;
+  background: var(--chip); border: 1px solid var(--line);
+  flex: none;
+  /* block：行内 img 会在 .cov 盒子里留一道基线间隙，封面遮罩（inset:0）会溢出封面下沿 */
+  display: block;
+}
+.book .cover.ph {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-3); font-size: 11px; line-height: 1.2; text-align: center;
+}
+/* 封面外面包一层：可借家数角标要相对封面定位，压不住别的东西 */
+.cov { position: relative; display: block; flex: none; }
+.book .cov { width: 38px; }
+/* 查询结果画在封面上、不落行内文字：allout = 灰罩 + 封面去色 + 印章「都已借出」；
+   inhouse = 轻罩 + 微去色 + 印章「仅馆内」；
+   norecord = 浅一档的灰罩 + 印章「无此版本」（书是「没有」不是「借完」，罩淡一档、语气轻一点）。
+   三种印章罩的浓淡：allout .6 > norecord .42 > inhouse .32——书还能进馆看，
+   只是不能外借，压得比「都已借出」轻，别把能看的书也判成死路。
+   遮罩盖在 .cover 上（::after 继承封面 4px 圆角），「无封面」占位块一样盖。
+   颜色写死中性色：遮罩压的是封面图，跟页面明暗无关（同地图标记的道理）。
+   busy（查询中）2026-10-26 起不再蒙层转圈：封面是这一行唯一能认出一本书的东西，
+   查的时候把它糊掉，等于查一次就少看见一次；结果区那行「正在查上图…」已经在说这件事 */
+.cov.allout::after,
+.cov.inhouse::after,
+.cov.norecord::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.cov.allout::after { background: rgba(110, 117, 126, .6); }
+.cov.allout .cover,
+.cov.norecord .cover { filter: grayscale(1); }
+.cov.norecord::after { background: rgba(110, 117, 126, .42); }
+.cov.inhouse::after { background: rgba(110, 117, 126, .32); }
+.cov.inhouse .cover { filter: grayscale(.35); }
+
+/* 印章：参考闲鱼「卖掉了」那枚邮戳——斜着盖、白描边、双线框。
+   封面只有 38px 宽，波浪邮戳线放不下，省掉；印章宽度收在「封面 38 + 缝隙 9」以内，
+   右侧不伸进书名（书名是主信息，盖住一个字就漏了一个字），左侧出头落在 .book 的
+   8px 内边距里，.booklist 的 overflow 裁不到。进场做成「盖下去」：从大收到正常 + 淡入 */
+/* 印章不绑 .book：书架里所有 38px 封面共用这一套，结果页封面已不再挂借阅状态 */
+.cov .stamp {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  transform: translate(-50%, -50%) rotate(-12deg);
+  white-space: nowrap;
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+  padding: 2px 4px 2px 3px;
+  color: rgba(255, 255, 255, .92);
+  border: 1px solid rgba(255, 255, 255, .85);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .35);
+  background: rgba(96, 102, 110, .3);
+  pointer-events: none;
+}
+/* 仅馆内的印章底也淡一档：书还在馆里、只是不能带走，别盖得跟「都已借出」一样重 */
+.cov.inhouse .stamp { background: rgba(82, 88, 96, .4); }
+/* 动画只在「刚查完对应书」时由 stamp-anim 触发；默认静态，重绘列表不会让别的书印章重播 */
+.cov .stamp.stamp-anim { animation: stampIn .32s ease-out; }
+@keyframes stampIn {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(-12deg) scale(1.8); }
+  62% { opacity: 1; transform: translate(-50%, -50%) rotate(-12deg) scale(.94); }
+  100% { opacity: 1; transform: translate(-50%, -50%) rotate(-12deg) scale(1); }
+}
+.res-head .cov { width: 58px; height: 82px; }
+.book .bk-main { min-width: 0; }
+/* 书名一行就够：书单是选书的入口，长书名截断 + title 里给全名 */
+.book .t {
+  font-size: 13px; font-weight: 500; line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.book .s {
+  font-size: 12px; color: var(--ink-3); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* ISBN：等宽小字。同一个书名不同版本全靠它区分 */
+.book .isbn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 1px;
+}
+.book .isbn > span {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 书单行不再有任何状态文字（busy/allout/norecord 全在封面上），.chip 一族随之删除。
+   「N 个版本」也撤了：选书时不需要知道有几个版本，点开这本书才需要 */
+
+section.result {
+  position: relative;
+  overflow-y: auto;
+  min-height: 0;
+  /* 顶部这一段是给头部（药丸 + 圆钮）让位：它属于滚动内容，往下滚就跟着走掉，
+     滚起来之后视口顶上直接是卡片，不再有一块空白常驻占着 */
+  padding: var(--hdr-h, 60px) 0 40px;
+}
+
+/* 结果区宽度 = 视口的 40%，两侧的空白合计 60%。
+   上限 860：再宽一行就拉得太长，眼睛要横着跑；下限留给窄屏（那时由媒体查询接管）。
+   40% 这个数是量出来的：1920 屏 → 768，卡片一行仍有 60 来字，读起来不累；
+   1440 → 576，刚好放得下「馆名 + 图标 + 距离」那一行 */
+.result-inner {
+  position: relative;
+  z-index: 1;              /* 地图是背景（z-index 0），正文整体压在它上面 */
+  width: 40vw;
+  min-width: 520px;
+  max-width: 860px;
+  margin: 0 auto;
+  /* 卡片悬浮底色往左右各溢出这么远，正好停在这一层的左右内沿（见 .card::after）。
+     这里左右内距是 0，也就是宽屏不带地图时底色本来就跟纸同宽。
+     单位不能省：--gut 会进 calc(-1 * var(--gut))，光写 0 算出来是个数不是长度 */
+  --gut: 0px;
+  padding: 22px 0 0;
+}
+
+/* 卡片列只有一列了（地图已改成背景），栅格留着是为了「显示其余 N 家」这类块还挂得住 */
+.res-cols { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+
+/* 有地图时，整列**常驻在左侧、盖在地图上面**：fixed 面板，自己滚，
+   右边整块露给地图（地图不吃鼠标的地方也归它）。没有收起这回事 */
+.result-inner.has-map {
+  position: fixed;
+  left: var(--aside-w, 292px);
+  top: 0;
+  bottom: 0;
+  width: var(--list-w);
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: calc(var(--hdr-h, 60px) + 8px) 16px 16px;
+  z-index: 2;                 /* 在地图（z-index 0）之上 */
+  display: flex;
+  flex-direction: column;
+}
+/* 列表这张纸：**宽度恒占满面板**（align-items:flex-start 会连宽度也收缩，
+   内容一短纸就变窄，纸和地图左沿之间露一条页面底色）；高度仍贴着内容收，
+   内容多时最高到面板底（再高就内部滚）。
+   之前是 align-items: start 且没有 max-height——高度跟着内容无限长，溢出面板后被视口裁掉，
+   滚轮就彻底失效；改成 stretch 又会让短列表也拉成全屏的空玻璃。两头都要:用 max-height 卡住 */
+.result-inner.has-map .res-cols {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+}
+/* 面板里的垫子：底子要比悬空时实一档——背后是清晰的地图，.74 会透出纹理把字压花 */
+.result-inner.has-map .res-list {
+  flex: 0 1 auto;
+  width: 100%;           /* 宽度不跟内容走，右沿永远接上地图左沿的淡出 */
+  min-height: 0;
+  max-height: 100%;      /* 面板底就是上限，超过就在纸内部滚 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(255, 255, 255, .88);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  backdrop-filter: blur(16px) saturate(1.5);
+  /* 纯阴影、不描边：这列是浮在地图上的一张纸，边缘交给投影，
+     再加一圈 1px 亮线会把它画成一张「卡片」，跟地图抢边界 */
+  border: 0;
+  border-radius: var(--r-lg);
+  /* 左右内距就是这个变量：卡片的悬浮底色按它往外溢，正好停在纸的内沿（见 .card::after） */
+  --gut: clamp(14px, 1.4vw, 22px);
+  padding: 16px var(--gut) 18px;
+  box-shadow: var(--shadow-float);
+  /* 滚动条藏起来：这是一张「纸」，边上挂一根灰条很跳。手感和能力都不受影响——
+     滚轮、触控板、PgUp/PgDn、方向键照旧 */
+  scrollbar-width: none;
+}
+.result-inner.has-map .res-list::-webkit-scrollbar { width: 0; height: 0; }
+html[data-theme="dark"] .result-inner.has-map .res-list { background: rgba(22, 26, 32, .9); }
+/* 面板窄，一行放不下就换行，别把馆名压成两个字 */
+.result-inner.has-map .card .row1 { flex-wrap: wrap; row-gap: 2px; }
+
+.empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--ink-3);
+  padding: 40px;
+  text-align: center;
+}
+.empty h2 { margin: 0; font-size: 16px; color: var(--ink-2); font-weight: 600; }
+.empty p { margin: 0; max-width: 46ch; font-size: 13px; line-height: 1.7; }
+
+/* ---------------------------------------------------------------- 空态 */
+
+/* 结果区一张卡都没有时的占位：淡玻璃底 + 大图标 + 一句标题 + 一句解释 + 出路按钮。
+   跟 .empty（整页居中、无边框）不同，它出现在结果列表中间，所以要有自己的边界，
+   否则上面的筛选条和下面的「查了 N 个版本」之间会显得空得莫名其妙 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding: 32px 24px;
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, .34);
+  border: 1px dashed var(--line-strong);
+}
+html[data-theme="dark"] .empty-state { background: rgba(255, 255, 255, .03); }
+.empty-state .es-ico {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--chip);
+  color: var(--ink-3);
+}
+/* 图标本身放大到 24px：空态是页面唯一内容，图标太小会像加载失败 */
+.empty-state .es-ico .ic { width: 24px; height: 24px; stroke-width: 1.6; }
+.empty-state h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--ink); }
+.empty-state p {
+  margin: 0;
+  max-width: 40ch;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+.empty-state p b { color: var(--ink-2); font-weight: 600; }
+.empty-state .es-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* 结构异常（上图改版）是「出错了」而不是「没有」，用暖色把两者分开 */
+.empty-state.warn { border-style: solid; border-color: var(--warn-soft); background: var(--warn-soft); }
+.empty-state.warn .es-ico { background: rgba(217, 119, 6, .16); color: var(--warn); }
+.empty-state.warn h2 { color: var(--warn); }
+
+/* ---------------------------------------------------------------- 结果头 */
+
+.res-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.res-head img, .res-head .cover {
+  width: 58px; height: 82px; object-fit: cover; border-radius: 5px;
+  border: 1px solid var(--line); flex: none;
+  /* block：理由同 .book .cover——不让行内基线间隙把 .cov 盒子撑高 */
+  display: block;
+}
+.res-head .cover.ph {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-3); font-size: 11px; background: var(--chip); text-align: center; line-height: 1.2;
+}
+.res-head .h-main { flex: 1; min-width: 0; }
+/* 标题行：书名占满左边，两枚外链钉在行末——落款不该挨着书名，书名要留自己的位置 */
+.res-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 19px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.res-head h1 .ht { flex: 1 1 auto; min-width: 0; }
+/* 外链：跳上图原始页面。用上图官方馆徽，点击后新标签打开 Record 页 */
+.res-head .extlink {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 3px;
+  border-radius: 6px;
+  text-decoration: none;
+  transition: background .12s;
+}
+/* 两枚落款同一个方框：馆徽是横的（576×376）、豆瓣标是方的，
+   各自 contain 进 15×15 才在视觉上等大——按原图比例给高度的话横标会显得宽一圈 */
+.res-head .extlink img {
+  display: block;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  border-radius: 2px;
+}
+.res-head .extlink:hover { background: var(--hover); }
+.res-head .extlink:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
+/* 馆徽里的深蓝在暗色背景上几乎看不见：白底只垫在图片下面（不是整颗 24px 的按钮），
+   不然一枚小落款会变成一块比书名还抢眼的白牌 */
+html[data-theme="dark"] .res-head .extlink { background: transparent; }
+html[data-theme="dark"] .res-head .extlink img {
+  box-sizing: content-box;
+  padding: 2px;
+  background: #fff;
+}
+html[data-theme="dark"] .res-head .extlink:hover { background: transparent; }
+html[data-theme="dark"] .res-head .extlink:hover img { background: #eef2f5; }
+
+.res-head .sub { font-size: 12px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- 豆瓣内容 */
+/*
+ * 豆瓣徽标直接用官方 favicon：源标识用官方图，别自己画。
+ */
+.dblogo {
+  display: block;
+  width: 16px; height: 16px;
+  flex: none;
+}
+
+/* 本书其他版本：默认折成一行（见 app.js 的 versionsHTML），点了才列 */
+.db-vers { margin-top: 8px; }
+.db-vers:empty { display: none; }
+.db-vers-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  /* 全局 button 给了 height:var(--ctl)（36px），这里要的是贴着 11px 文字的小胶囊 */
+  height: auto;
+  padding: 3px 8px 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.db-vers-head:hover { background: var(--hover); border-color: var(--brand-line); color: var(--ink-2); }
+.db-vers-head:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 1px; }
+.db-vers-head .ic { width: 12px; height: 12px; transition: transform .15s; }
+/* 展开时箭头翻上去：chevron-down 转 180°，不用第二个图标 */
+.db-vers-head.open .ic { transform: rotate(180deg); }
+.db-vers-lbl { font-size: 11px; color: inherit; }
+.db-vers-n { font-size: 11px; color: inherit; font-variant-numeric: tabular-nums; }
+.db-vers-rows { display: flex; flex-direction: column; gap: 2px; }
+/* 版本行：左边出版社+年份、中间 ISBN、右边动作。行本身可点，悬停才亮成品牌色。
+   高度收到 32（h-8）：12px 正文 + 上下留白刚刚好，36 一排显得比书本身还重 */
+.db-ver {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.db-ver:hover { background: var(--brand-soft); border-color: var(--brand-line); }
+.db-ver:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
+.dbv-main { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+.dbv-pub {
+  color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dbv-isbn {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: .2px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.dbv-isbn.none { color: var(--warn); }
+.dbv-go {
+  flex: none;
+  font-size: 11px;
+  color: var(--brand);
+}
+.dbv-go.none { color: var(--ink-3); }
+/* 版本查询的说明行（没有其他版本 / 正在查 / 查失败重试） */
+.db-vers-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.db-vers-note .spin { width: 11px; height: 11px; border-width: 2px; }
+/* 待选版本（书名没有 ISBN 时）：行更高、动作在右侧，跟结果页的版本列表同一套行样式 */
+.db-vers-rows.pick { margin-top: 12px; gap: 6px; }
+.db-vers-rows.pick .db-ver { height: auto; min-height: 36px; padding: 6px 10px; }
+.linkish {
+  padding: 0; border: 0; background: none;
+  color: var(--brand); font: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .dbv-main { flex-wrap: wrap; gap: 0 8px; }
+  .dbv-pub { max-width: 100%; }
+  .dbv-isbn { font-size: 10.5px; }
+}
+/* 第三排：ISBN 单独一行。等宽数字，抄号核对时逐位对得上眼 */
+/* 筛选条：一整行 flex，筛选档在左、动作圆钮被 .spacer 推到最右。
+   这一条以前只有手机媒体查询里的片段，桌面端落到 display:block，子元素全按 inline 挤成一行，
+   「重新查询 / 地图」两颗圆钮就贴在一起了 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0;
+  margin-bottom: 0;
+  /* 这一条是结果列表的表头，和下面第一张卡之间原来只有卡片自己的 12px 内边距，
+     实测 0 条边框 0 外边距，看着就是粘在一起。给它一道和卡片之间同色同粗的下边线 */
+  border-bottom: 1px solid var(--line);
+}
+/* 筛选条下面紧跟提示条时（「已隐藏 N 家…」那条），这条线会直接压在提示条的描边上。
+   给 8px：线归线，盒子归盒子 */
+.toolbar + .note.bar { margin-top: 8px; }
+/* 右侧两颗圆钮之间再单给一点距离：它们一个是「重抓」一个是「视图开关」，不该粘成一坨 */
+.toolbar .spacer + button.icon-btn { margin-left: 4px; }
+.toolbar button.icon-btn + button.icon-btn { margin-left: 4px; }
+/* 工具栏的图标钮跟分段、开关同高，这一排才是一条水平线 */
+.toolbar button.icon-btn { width: var(--ctl); height: var(--ctl); }
+/* 筛选条是列表的从属工具，不该用「主按钮」那档 36（h-9）。宽屏整排降到 --ctl-sm 32：
+   外槽 32 → 槽内 30 → 滑块/按钮 24，正好还是同心的一套；开关盒子 32（轨道仍 32×18）、
+   圆钮 32×32（图标仍 16）。字号不动（分段和开关都还是 13/500），只收盒子高度。
+   ≤640 不跟：手机这排本来就是 36，项目里 2026-10-26 刚把手机书架头部按钮统一到 36，
+   再降就往触控下限下面走了 */
+@media (min-width: 641px) {
+  .toolbar .seg,
+  .settings .seg { height: var(--ctl-sm); }
+  .toolbar .seg button,
+  .settings .seg button { height: 24px; }
+  .toolbar .tgl,
+  .settings .tgl { height: var(--ctl-sm); }
+  .toolbar button.icon-btn { width: var(--ctl-sm); height: var(--ctl-sm); }
+}
+/* 筛选：两个纯文字按钮，选中靠浅底色 + 品牌色，不画外框——外框加内边距太占横排空间 */
+/* 分段按钮（.seg）：一处样式三处用——工具栏「可借 | 全部」、设置页「展开 | 收起」。
+   形态是「浅槽 + 浮块」：外圈是几乎看不见的凹槽，选中项浮起一小块面板。
+   不再用实心品牌色——那个色块太重，跟旁边的开关抢层级；选中只靠「浮起来」表达 */
+.seg {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  height: var(--ctl);
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--chip);
+}
+/* 滑块是独立一层：按钮自己不再画底，切换时只挪这一块，文字始终在上面。
+   位置/宽度由 app.js 的 placeSegThumb / slideSegThumb 按选中按钮算 */
+.seg-thumb {
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  z-index: 0;
+  width: 0;
+  border-radius: 999px;
+  background: var(--seg-thumb);
+  box-shadow: var(--thumb-shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform .18s cubic-bezier(.2, .8, .2, 1),
+              width .18s cubic-bezier(.2, .8, .2, 1);
+}
+.seg.thumb-ready .seg-thumb { opacity: 1; }
+.seg button {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  border-radius: 999px;
+  height: 28px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1;
+  transition: color .12s;
+}
+.seg button:hover:not(.on):not(:disabled) { color: var(--ink); background: transparent; }
+.seg button.on { background: transparent; color: var(--ink); }
+
+.note {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.note.bar {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-line);
+  border-left: 2px solid var(--brand-line);
+  border-radius: var(--r-sm);
+  line-height: 1.6;
+  /* 显式钉死：防止任何同名类（历史上 .bar 进度条）把提示条压成 5px 高 */
+  height: auto;
+  overflow: visible;
+}
+/* 结构异常（上图页面改版，解析失效）：暖色提醒，跟普通筛选提示区分开 */
+.note.bar.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-left-color: var(--warn);
+}
+/* 旧数据提示：馆藏页缓存 12 小时，超过 30 分钟就明说是快照，并给一个重查出口。
+   整段正文走常规层级，只有「43 分钟前」这个数字转暖色——橙色的职责是「先看一眼这个」，不是给长句上色 */
+.note.bar.stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  background: var(--warn-soft);
+  border-left-color: var(--warn);
+}
+.note.bar.stale b { color: var(--warn); font-weight: 600; }
+.note.bar.stale .ic { flex: none; width: 15px; height: 15px; }
+.note.bar.stale .txt { flex: 1 1 200px; min-width: 0; }
+.note.bar.stale button { flex: none; height: 28px; padding: 0 12px; font-size: 12px; }
+
+/* 假期/调休日提醒：不是警告，也不改变任何营业判断，所以走中性底 + 品牌色图标 */
+.note.bar.holiday {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ink-2);
+}
+.note.bar.holiday .ic { flex: none; width: 15px; height: 15px; margin-top: 2px; color: var(--brand); }
+.note.bar.holiday .txt { flex: 1 1 auto; min-width: 0; }
+
+/* 结果区页脚：只剩「数据是什么时候的」（2026-10-26 删掉耗时、版本数挪进 title）；
+   整行保持次要灰，不另起一行 */
+.res-meta { margin-top: 14px; color: var(--ink-3); }
+/* 数据过期时只让「数据 xx:xx · x 小时前」转暖色，别让整行灰字一起橙 */
+.res-meta.stale .stale-time { color: var(--warn); }
+
+/* 首屏定位引导条：没定位时距离、按距离排序、骑行用时全都没有——这是应用的主能力，
+   所以做成一条带按钮的引导条（定位 / 手填地址），而不是埋在筛选条里的一行灰字 */
+.geobar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-md);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.geobar .ic { flex: none; color: var(--brand); }
+.geobar .txt { flex: 1 1 auto; min-width: 0; }
+.geobar button { flex: none; }
+
+/* 进场动效只有一套：整块重渲染时，「书头 / 引导条 / 空态 → 提示条 → 结果行」排成一条队列，
+   每档隔 22ms 从下方 4px 渐显到位。以前是 resIn(+3px)/geobarIn(−4px)/fadeIn/cardIn(+4px)
+   四套同时起跑，方向和时长各走各的，看着像四个部件各自进门。
+   队列位置写在 --q 上，卡片接在提示条后面（第 10 张起钳在 9，末尾仍压在 450ms 内）。
+   书单行不做——renderBooks 在每次状态变化时整表重建，给行加动画等于一直闪 */
+@keyframes reveal { from { opacity: 0; transform: translateY(4px); } }
+.res-head, .geobar, .empty-state, .note.bar, .card {
+  animation: reveal .22s ease-out both;
+  animation-delay: calc(var(--q, 0) * 22ms);
+}
+.note.bar { --q: 1; }
+@keyframes fadeIn { from { opacity: 0; } }
+
+/* 「营业中」开关：文字在左、滑块在右，整块都可点。
+   它是一个布尔，不是二选一——用滑块才和旁边的分段控件分得开；
+   按下态只给滑块上色，文字最多提一档，别让整块变成第二个「选中的按钮」 */
+.tgl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--ctl);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+/* 轨道按 shadcn Switch 的比例：32×18，滑块 16、四周各留 1 */
+.tgl .tgl-track {
+  position: relative;
+  flex: none;
+  width: var(--ctl-sm);
+  height: 18px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background .16s, box-shadow .16s;
+}
+.tgl .tgl-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  transition: transform .18s cubic-bezier(.3, .7, .4, 1);
+}
+.tgl:hover:not(:disabled) {
+  color: var(--ink);
+  /* 通用 button:hover 的灰底优先级更高，会铺满整块 79.5×30；
+     这里显式还原透明，hover 反馈只落在轨道上 */
+  background: transparent;
+}
+.tgl:hover:not(:disabled) .tgl-track {
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
+  box-shadow: 0 0 0 3px var(--hover-2);
+}
+.tgl[aria-pressed="true"] { color: var(--ink); }
+.tgl[aria-pressed="true"] .tgl-track { background: var(--brand); }
+.tgl[aria-pressed="true"]:hover:not(:disabled) .tgl-track {
+  background: var(--brand);
+  box-shadow: 0 0 0 3px var(--hover-2);
+}
+.tgl[aria-pressed="true"] .tgl-knob { transform: translateX(14px); background: var(--on-brand); }
+.tgl:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 2px; }
+
+/* 地图开关按下时给个浅底，跟其他图标按钮区分 */
+button.icon-btn.on,
+button.icon-btn.on:hover:not(:disabled) {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+/* ---------------------------------------------------------------- 地图 */
+
+/* 地图列：结果区右侧，跟着滚但吸在视口里（高度由 JS 按头部实际位置算）。
+   默认给 340 起步、JS 量出视口余量后再顶到最大——比原来的 420 矮一截，
+   它只是旁证，占太高会把卡片的视觉重心压下去 */
+/* 地图做**结果区的背景**：铺满整个结果面板（不含左边书单栏），卡片浮在上面。
+   fixed 让它像桌面壁纸一样不随内容滚动——结果区自己内滚，地图要是跟着滚，
+   滚两下就露出没瓦片的空白了。
+   `--aside-w` 由 .app 那层的布局给（书单 292 / 收起 44），换列宽只要改一处 */
+.map-bg {
+  /* 左边沿只到「列表面板右沿」再往回 24px：再往左整块都被面板挡死，
+     瓦片白下、标记也白放。--map-lead 那 24px 藏在面板底下，纯粹是接缝缓冲 */
+  --map-lead: 24px;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: calc(var(--aside-w, 292px) + var(--list-w, 0px) - var(--map-lead));
+  z-index: 0;
+  pointer-events: none;        /* 只有地图本体接事件，见下 */
+  /* 折叠/展开的交叉过渡：展开时以透明态插入，两帧后加 in 淡入；
+     折叠时加 leaving 淡出，淡完再重绘（position 不可过渡，只能靠淡出淡入补） */
+  transition: opacity .22s ease;
+}
+/* 刚插入还没加 in：全透明，等 JS 在下一帧补上 in */
+.map-bg:not(.in) { opacity: 0; }
+/* 淡出中：折叠点击后到重绘前的 220ms */
+.map-bg.leaving { opacity: 0; }
+/* 淡出遮罩 + 轻微压暗都作用在这一层，图例那颗小胶囊留在外面，不受影响 */
+.map-veil {
+  position: absolute;
+  inset: 0;
+  /* 不压暗、不虚化：地图就是一整张清楚的图（正文那侧靠面板自己垫底） */
+  /* 四个边各淡一道。左沿那道从面板右沿前面一点开始淡出→淡入，正好接上那块列表面板，
+     否则面板边上一刀切下去会像贴图没贴好 */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0, #000 calc(var(--map-lead) + 32px)),
+    linear-gradient(to left, transparent 0, #000 110px),
+    linear-gradient(to bottom, transparent 0, #000 76px, #000 calc(100% - 86px), transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent 0, #000 calc(var(--map-lead) + 32px)),
+    linear-gradient(to left, transparent 0, #000 110px),
+    linear-gradient(to bottom, transparent 0, #000 76px, #000 calc(100% - 86px), transparent 100%);
+  mask-composite: intersect;
+}
+/* 地图本体接鼠标：空白处能拖能双击缩放；卡片在它上面，点卡片不会打到地图 */
+.map-bg .map-box { position: absolute; inset: 0; pointer-events: auto; cursor: grab; }
+.map-bg .map-box:active { cursor: grabbing; }
+/* 图例：右下角一颗小胶囊，浮在地图上。它是唯一需要和地图分开层次的零件 */
+/* 缩放按钮：叠在地图右上角偏下，图例正上方。地图层本身不吃事件，这里要单独放开 */
+.map-bg .map-zoom {
+  position: absolute;
+  right: 18px;
+  bottom: 58px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+.map-bg .zbtn {
+  width: var(--ctl-sm); height: var(--ctl-sm);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: var(--shadow);
+}
+.map-bg .zbtn:hover { color: var(--brand); border-color: var(--brand-line); }
+.map-bg .zbtn .ic { width: 16px; height: 16px; }
+
+.map-bg .map-legend {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+.map-legend .mdot, .ms-legend .mdot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: #0a5c8a;
+}
+.map-legend .mdot + .mdot, .ms-legend .mdot + .mdot { margin-left: 6px; }
+.map-legend .mdot.no, .ms-legend .mdot.no { background: #9aa1a8; }
+/* 「我的位置」：跟真实定位点同走 --me（橙），跟馆标记的蓝分开——两处同源，
+   改色只改 :root 里那一支 */
+.map-legend .mdot.me, .ms-legend .mdot.me { background: var(--me); }
+/* 地图没加载出来：以前它占着一整列，现在地图是背景，这句话只能浮在角落里 */
+.map-bg .map-fail {
+  position: absolute;
+  left: calc(var(--map-lead) + 72px);
+  bottom: 16px;
+  max-width: 330px;
+  padding: 12px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--no);
+  pointer-events: auto;
+}
+
+/* 地图标记：馆标记走 --brand（暗色下变浅蓝也压得住白字），全部借出的灰是固定值
+   （不随主题变，地图上要的是「退出竞争」的中性灰）。
+   「我的位置」走 --me 那一支橙：它是全场唯一「你在这儿」的东西，跟馆标记同色就找不到了；
+   右上角定位点是同一个东西，两处同源（--me） */
+.mpin {
+  width: 24px;
+  height: 24px;
+  /* flex + line-height:1 居中，和卡片行首的序号同一个排法 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  /* 12 而不是 11：卡片行首的序号、信息窗上的号在 v0.0.40 统一成 12，
+     同一个「N 号馆」在三个地方必须是同一个字号 */
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--brand);
+  border: 1.5px solid var(--panel-solid);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+  cursor: pointer;
+  transition: transform .12s;
+}
+.mpin:hover { transform: scale(1.15); }
+.mpin.no { background: #9aa1a8; }
+.mpin.me {
+  width: 14px; height: 14px;
+  background: var(--me);
+  border-width: 2px;
+  box-shadow: 0 0 0 4px var(--me-soft);
+  cursor: default;
+}
+.mpin.me:hover { transform: none; }
+
+/* 手机全屏地图：窄屏没有背景地图，工具栏那颗按钮打开这一层。
+   整屏铺满，头部留关闭出口；地图本体吃手势（拖拽/双指缩放） */
+.map-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: var(--bg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .18s ease, visibility 0s linear .18s;
+}
+.map-sheet.show {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity .18s ease;
+}
+.ms-panel { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.ms-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px 16px;
+  background: var(--panel-top);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  border-bottom: 1px solid var(--line);
+  z-index: 2;
+}
+.ms-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.ms-acts { display: flex; align-items: center; gap: 6px; }
+.ms-loc {
+  flex: none;
+  width: var(--ctl-touch);
+  height: var(--ctl-touch);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+}
+.ms-loc:hover { background: var(--chip); color: var(--ink); }
+.ms-loc .ic { width: 20px; height: 20px; }
+.ms-close {
+  flex: none;
+  width: var(--ctl-touch);
+  height: var(--ctl-touch);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+}
+.ms-close:hover { background: var(--chip); color: var(--ink); }
+.ms-close .ic { width: 20px; height: 20px; }
+/* 地图容器自己就是 .amap-container（高德给它铺满），不要再给它的所有子 div 强塞 100%：
+   那样会把 .amap-copyright 也拉成整屏，压在标记上面吃掉点击 */
+.ms-map { position: relative; flex: 1; min-height: 0; }
+.ms-legend {
+  position: absolute;
+  left: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-top);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: var(--shadow);
+}
+.ms-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.ms-legend span[hidden] { display: none; }
+.ms-fail {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--no);
+}
+/* 全屏地图上的标记放大一档：手机上 24px 的圆点太小，点不中。
+   字号跟着 .mpin 的 12px 走，不在这里重写 */
+.map-sheet .mpin { width: 28px; height: 28px; }
+.map-sheet .mpin.me { width: 14px; height: 14px; }
+
+/* 自定义 InfoWindow 壳：高德默认那套是白底硬边框，暗色下很突兀 */
+.iw {
+  min-width: 180px;
+  max-width: 250px;
+  padding: 8px 12px;
+  /* 背景/描边来自玻璃公共规则 */
+  color: var(--ink);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
+  font-size: 12px;
+}
+.iw-h {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; line-height: 1.4; margin-bottom: 4px;
+}
+.iw-h i {
+  flex: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  font-style: normal; font-size: 12px; font-weight: 600;
+  line-height: 18px; text-align: center;
+  color: #fff; background: #0a5c8a;
+}
+.iw-h i.no { background: #9aa1a8; }
+.iw-b .ok { color: var(--ink); }
+.iw-b .ok .ic { color: var(--brand); }
+/* 「无可外借」不是报错，别用红色：红色在整站只留给真正的失败 */
+.iw-b .no { color: var(--ink-3); }
+.iw-b .avail { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.iw-b .avail.inhouse { color: var(--ink-2); }
+.iw-b .avail .ic { width: 12px; height: 12px; stroke-width: 2.4; }
+.iw-s { margin-top: 3px; color: var(--ink-3); line-height: 1.5; }
+.iw-s .iw-st { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.iw-s .iw-st.closed { color: var(--warn); }
+.iw-s .iw-st.open { color: var(--ink); }
+
+/* ---------------------------------------------------------------- 结果列表 */
+/* 不用卡片：一条结果就是一行，行与行之间只有一道 1px 细线。
+   第一行「编号 · 馆名 ........................ 距离」，
+   第二行一整句灰字「可借 · 营业 · 索书号 · 库室 · 用时」——
+   信息一条不少，但不再有每条的底色/描边/圆角/阴影去抢注意力 */
+
+.card {
+  padding: 12px 2px;
+  position: relative;        /* 给 .hit::before 那根点名线、下面那层底色当定位基准 */
+  /* 底色拉开成独立一层（.card::after，z-index:-1），所以这里必须自己成叠层上下文，
+     否则它会一路穿到结果纸的背景后面，什么也看不见 */
+  isolation: isolate;
+  /* 线画在下面：.card 前面还有书头/工具栏，用 :first-child 去掉首行的线永远匹配不到，
+     末尾那道正好把「查了 N 个版本」的脚注分开 */
+  border-bottom: 1px solid var(--line);
+  /* 错峰进入：渲染时内联 --ci（0 起，第 10 张起钳在 9）。+2 是接在书头、提示条后面，
+     整块只有一条队列（见上面的 reveal），不是卡片自己另起一套 */
+  --q: calc(var(--ci, 0) + 2);
+}
+/* 悬浮/点名的底色不画在卡片盒子上，交给这一层：左右各溢出容器的内距（--gut），
+   正好铺到结果纸的左右内沿。卡片的内距、行宽、分隔线一律不动——
+   以前底色缩在 2px 内距的盒子里，比分隔线还短，一行被切成两截 */
+.card::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  /* 上沿往上多让一段（--seat-up）：手机上卡片之间有 12px 间距，不越过这段，
+     被点中的那行顶部就会在空隙里露一条白。第一个值写成负的，也就是向上扩
+     回退值必须是 0px 不是 0：calc(-1 * 0) 是个数、不是长度，整条 inset 会判无效
+     退回 auto，这一层就缩成 0×0 贴在卡片右下角——第一张（没有 --seat-up）正是这么坏的 */
+  inset: calc(-1 * var(--seat-up, 0px)) calc(-1 * var(--gut, 0px)) 0;
+  transition: background .12s ease;
+}
+.card:hover::after { background: var(--hover); }
+/* 有坐标的行才能点（点了地图飞过去） */
+.card[data-idx] { cursor: pointer; }
+/* 地图标记点过来的那一行：整行淡淡上色，不再用描边圈一圈 */
+.card.hit::after { background: var(--brand-soft); }
+.card.hit .name { color: var(--ink); }
+/* 点名的强调感：左沿一根品牌色细线从上往下展开一次（.45s，不循环），
+   配背景渐显就是「被点名」的脉冲。位置在 .res-list 的 padding 里，不会露到面板外 */
+.card.hit::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--brand);
+  animation: hitLine .45s ease-out;
+}
+@keyframes hitLine {
+  from { transform: scaleY(0); opacity: 0; }
+  35% { opacity: 1; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+/* 第一行：编号 + 馆名 +（右侧一簇：动作图标 · 用时 · 距离） */
+.card .row1 { display: flex; align-items: center; gap: 8px; }
+/* 右侧那一簇整块推到行尾：馆名再长也只是自己截断，不会把这一簇挤散 */
+.card .rside {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 12px;
+  flex: none; align-self: center;
+}
+
+/* 序号：列表里不再画圈（v0.0.40）。实心品牌蓝按规范只该给「可点 / 已选中」，
+   每行行首都挂一颗就成了装饰，而且 18px 圈对地图标记 24px 圈，像同一个东西被随机缩放了一次。
+   现在它就是行首一个数字，卡片 ↔ 地图的对应关系仍靠同一个号（title 里也还写着）。
+   宽度仍钳在 18px：馆名左沿 26px（18 + 8 间距）和第二三行的缩进一点都不受影响。
+   字号 12、字重 600：和地图标记、信息窗上的号同一个字号同一档字重，也归进卡片自己的 12 字档 */
+.card .idx {
+  flex: none;
+  align-self: center;
+  width: 18px;
+  text-align: center;
+  font-size: 12px; font-weight: 600;
+  color: var(--ink-2);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+/* 整家馆都借不到的行：馆名已经压成 400/--ink-2，序号跟着再淡一档 */
+.card.out .idx { color: var(--ink-3); }
+
+.card .name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -.1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 全部借出的一行降一档：馆名退成次要色，其余照旧（别整行变灰，不然读起来像失效） */
+.card.out .name { color: var(--ink-2); font-weight: 400; }
+
+/* 拨号 / 导航：两个图标按钮（推右的活儿交给外层 .rside）。
+   字形收在 14px：16px 的图标比同排 13px/600 的馆名还抢眼；可点区留 30px，
+   够得着但不占横向空间——第一行还要放馆名、距离和骑行用时 */
+.card .acts {
+  display: flex; align-items: center; gap: 2px;
+  flex: none;
+}
+.card .acts a {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 999px;
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.card .acts a:hover { background: var(--hover); color: var(--brand); }
+.card .acts a:active { background: var(--brand-soft); }
+.card .acts a:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
+.card .acts .ic { width: 14px; height: 14px; }
+
+/* 距离：普通的次要信息，不加粗不上色 */
+.card .dist {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  white-space: nowrap;
+  font-weight: 400;
+}
+.card .dist.none { color: var(--ink-3); }
+
+/* 第二行：一整句灰字「可借 · 营业 · 索书号 · 库室」。
+   .badges / .foot / .callnos 都是真实的小格子，组内组间用同一条 · 规则连起来 */
+.card .meta {
+  display: flex; flex-wrap: wrap; align-items: center;
+  row-gap: 4px;
+  margin-top: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+  min-width: 0;
+}
+/* 第三排：索书号 + 阅览室。默认收起（渐进披露，见 app.js 的 cardHTML），
+   .foot 是外壳、.foot-tgl 是那枚永远在的展开钮、.foot-body 才是真正的内容行 */
+.card .foot {
+  display: block;
+  margin-top: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+  min-width: 0;
+}
+.card .foot-tgl {
+  display: inline-flex; align-items: center; gap: 4px;
+  /* 同上：不吃全局 button 的 36px 定高，否则收起态反而把每张卡垫高 */
+  height: auto;
+  padding: 1px 6px 1px 4px;
+  border: 0; border-radius: 5px;
+  background: none;
+  font: inherit; font-size: 11px; line-height: 1.5;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.card .foot-tgl:hover { background: var(--hover); color: var(--ink-2); }
+.card .foot-tgl:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
+.card .foot-tgl .ic { width: 11px; height: 11px; transition: transform .15s; }
+.card .foot.open .foot-tgl .ic { transform: rotate(180deg); }
+/* 内容行：收起时不占位；桌面有 hover 的话，鼠标停在卡上就临时给全（触屏没有 hover，
+   靠上面那枚按钮展开）。两条路都不改动数据，只改可见性 */
+.card .foot-body {
+  display: none;
+  flex-wrap: wrap; align-items: center;
+  row-gap: 4px;
+  min-width: 0;
+}
+.card .foot.open .foot-body { display: flex; }
+@media (hover: hover) {
+  .card:hover .foot-body { display: flex; }
+}
+/* 左沿对齐只跟「有没有序号」走：有 .idx 时馆名被 18px 宽的序号 + 8px 间距推到 26px，
+   这两行补 26px 跟馆名齐；没序号（地图折叠 / 无坐标馆）时馆名贴卡片左沿，
+   这两行也贴齐——写死会让它们凹进去，跟馆名错位（2026-10-21 用户截图指出）。
+   v0.0.40 起 .idx 不再是实心圆，是个占满 18px 的纯数字，宽度没变，所以 26 这个数不用跟着改 */
+.card.with-idx .meta,
+.card.with-idx .foot { padding-left: 26px; }
+.card .badges,
+.card .foot .callnos {
+  display: flex; flex-wrap: wrap; align-items: center;
+  row-gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* 分隔点：除每组的第一个之外，每项前面挂一个 |，不用在 HTML 里手写。
+   margin 直接给在伪元素上（不是 flex gap），换行时 | 才不会跑到行首去 */
+.card .meta > * + *::before,
+.card .badges > * + *::before,
+.card .foot-body > * + *::before,
+.card .callnos > * + *::before {
+  content: "|";
+  margin: 0 7px;
+  color: var(--line-strong);
+}
+
+/* 标签不再是 chip：摊平成普通文字，只有状态用颜色说话 */
+.tag {
+  font-size: 12px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tag.ok { background: none; color: var(--ink); }
+.tag.ok .ic { color: var(--brand); }
+.tag.no { background: none; color: var(--ink-3); }
+/* 仅馆内：有这本馆藏，只是不能外借。比「无可外借」实一点，又不用可借的强调色 */
+.tag.inhouse { color: var(--ink-2); }
+.tag.open { background: none; color: var(--ink); }
+/* 开馆时间未知：缺数据是中性信息，保持次要灰，别用闭馆的暖色。
+   它比「营业中」弱一档——一个是确定状态，一个是没数据。 */
+.tag.notime { background: none; color: var(--ink-3); }
+.tag.closed { background: none; color: var(--warn); }
+/* 「已闭馆 · 明天 9:00 开」里后半句：是补充说明，不是警告本体，弱一档。
+   左边留 .34em：中点比竖线更贴字，不留白就成了「今日闭馆·明天」 */
+.tag .next { opacity: .62; margin-left: .34em; }
+/* 状态徽标：书本勾/叉、门、眼睛在前，文字在后，尺寸统一交给这里 */
+.tag .ic {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: -2px;
+  margin-right: 3px;
+  stroke-width: 2.4;
+}
+/* 借阅类型（普通外借 / 保存本 / 参考外借）也只是一句灰字。
+   12px：以前比同行其他徽标小一档，那行本来就全是次要灰，小一号没有信息量，只是更难读 */
+.tag.kind { font-size: 12px; padding: 0; background: none; color: var(--ink-3); }
+.tag.kind .ic { opacity: .78; }
+.tag.kind b { font-weight: 400; font-variant-numeric: tabular-nums; }
+.tag.kind.dim { background: none; border: 0; color: var(--ink-3); }
+/* 借阅类型收成两簇：外借一簇、馆内一簇。簇内用 · 连接，簇间仍由 .badges 的 | 分隔；
+   眼睛只放在馆内簇的簇首，簇内每项（类型名 + 数量）不许在中间折断 */
+.tag.kind.kg { white-space: normal; }
+.tag.kind.kg .ki { white-space: nowrap; }
+.tag.kind.kg .ki:not(:last-child)::after {
+  content: "·";
+  margin: 0 5px;
+  color: var(--ink-3);
+  opacity: .6;
+}
+
+/* 骑行用时：跟其他灰字同档，图标再小一档。
+   挂在第二行（.meta）最右：margin-left:auto 推到右缘，正好落在第一行「距离」下方；
+   它不吃第二行的 · 分隔点（那是标签之间的连接符） */
+.card .rides {
+  display: flex; align-items: center; gap: 7px;
+  flex: none;
+  margin-left: auto;
+  padding-left: 12px;
+}
+.card .meta > .rides::before { content: none; margin: 0; }
+.card .rides:empty { display: none; }
+.card .ride {
+  display: inline-flex;
+  /* 数字与「分」按基线对齐（图标没有基线，单独靠自身盒居中）。
+     「分」以前小一号，跟数字差半格重心；现在同字号，只靠透明度弱一档 */
+  align-items: baseline;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+  /* 骑行用时是异步回填的：查到才出现。淡入一下，别在第二行右端「啪」地弹出来 */
+  animation: fadeIn .18s ease-out;
+}
+/* 超 10 公里的馆不画骑行用时（见 app.js 的 fillRides）：位子留空，不给占位说明。
+   图标比通用 .ic 再小一档：12px 的行里 11px 的图形才跟字面等高。
+   stroke-width 调到 2.4：缩到 11px 后默认 2 会显得比旁边的字细一截 */
+.card .ride .ic {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.4;
+  opacity: .85;
+  align-self: center;
+}
+.card .ride .u { opacity: .7; margin-left: .5px; line-height: 1; }
+
+/* 索书号：等宽字，点一下复制。不再有底色方框。
+   min-width:0 是关键：flex 子项默认 min-width:auto，内容多宽就多宽，
+   省略号永远不生效（长索书号会把卡片顶宽）。给 0 之后它才肯缩，缩不下才出省略号 */
+.card .foot .callno {
+  /* 它是「一行等宽字」而不是按钮：把基类的按钮盒（36 高、左右 16）整组还原掉 */
+  display: block;
+  height: auto;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+}
+.card .foot .callno:hover { color: var(--brand); background: none; }
+.card .foot .callno:active { color: var(--brand); background: none; }
+
+/* 库室：第三行右边的阅览室名，跟索书号一样限宽截断（长馆室名会把卡片撑宽）。
+   有可借册时跟索书号同色；都已借出才退回淡一档 */
+.card .foot .rooms {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card:not(.out) .foot .rooms { color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- 设置面板 */
+
+.settings {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 20px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .18s ease, visibility 0s linear .18s;
+}
+.settings.show {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity .18s ease;
+}
+.settings .box {
+  /* 背景/描边来自玻璃公共规则，但弹窗现在常压在地图上：0.66 的玻璃会把路网透成噪声，
+     这里单独加到 0.9 左右，既能看出是磨砂板，又保证输入框和文字干净 */
+  background: rgba(255, 255, 255, .9);
+  border-radius: var(--r-lg);
+  width: min(560px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 20px 24px 16px;
+  box-shadow: var(--shadow-float);
+  position: relative;
+  /* 开合动效：从略缩小 + 下沉淡入；.show 时归位 */
+  transform: translateY(6px) scale(.97);
+  opacity: 0;
+  transition: transform .2s ease, opacity .2s ease;
+}
+.settings.show .box { transform: none; opacity: 1; }
+html[data-theme="dark"] .settings .box { background: rgba(24, 28, 34, .92); }
+.settings h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+/* 右上角 X：点一下关设置。和底部「关闭 / 保存」是两套入口，给鼠标和触屏都留一手。
+   用两条交叉线画 X（绝对定位到 30px 圆心），比文字 × 字形更对称、视觉绝对居中；
+   hover 给圆形背景 + 阴影 */
+.settings .x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: var(--ctl-sm);
+  height: var(--ctl-sm);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.settings .x::before,
+.settings .x::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+}
+.settings .x::before { transform: translate(-50%, -50%) rotate(45deg); }
+.settings .x::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.settings .x:hover { background: var(--chip); color: var(--ink); box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+.settings .x:active { transform: scale(.94); }
+html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
+/* 分组标题：一条细线 + 小字。五组（地图 / 豆瓣书单地址 / 地图 API Key / 从其他设备访问 / 关于）靠它分开 */
+.grp {
+  margin: 12px 0 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  color: var(--ink-3);
+}
+.settings h2 + .grp { margin-top: 6px; border-top: 0; padding-top: 0; }
+/* 别的设备只读说明：不是错误，底色和左沿那条线负责点出位置，正文走常规层级 */
+.note.ro {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  background: var(--brand-soft);
+  border-left: 2px solid var(--brand-line);
+  border-radius: var(--r-sm);
+}
+.field { margin-bottom: 12px; }
+.field.last { margin-bottom: 0; }
+.field label { display: block; font-size: 13px; color: var(--ink-2); margin-bottom: 4px; font-weight: 500; }
+/* 标准输入件：输入框 / 下拉统一 h-9（36）。聚焦语言跟检索药丸同源：
+   边框变品牌色 + 一圈 3px 柔光，不用 outline */
+.field input, .select-btn {
+  width: 100%;
+  height: var(--ctl);
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 14px;
+  transition: border-color .14s, box-shadow .14s, background .14s;
+}
+.field input::placeholder { color: var(--ink-3); }
+.field input:hover, .select-btn:hover { border-color: var(--ink-3); }
+.field input:focus, .select-btn:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: var(--ring);
+}
+/* 自绘 listbox：触发钮和输入框同高同底，菜单浮在面板上。
+   原生 select 的系统弹层跟这套玻璃配色对不上，也没法把选中标记画成图标 */
+.select { position: relative; }
+.select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  text-align: left;
+  font-weight: 400;
+  cursor: pointer;
+}
+.select-btn > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-btn .ic { width: 16px; height: 16px; color: var(--ink-3); transition: transform .16s ease; }
+.select.open .select-btn { border-color: var(--brand); box-shadow: var(--ring); }
+.select.open .select-btn .ic { transform: rotate(180deg); }
+.select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 100%;
+  width: max-content;
+  max-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow-float);
+  animation: selectIn .14s ease;
+}
+.select-menu[hidden] { display: none; }
+.select-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  height: var(--ctl-sm);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+.select-opt:hover:not(:disabled), .select-opt:focus-visible {
+  outline: none;
+  background: var(--chip);
+  color: var(--ink);
+}
+.select-opt .ic { width: 16px; height: 16px; color: var(--brand); opacity: 0; }
+.select-opt.on { color: var(--ink); }
+.select-opt.on .ic { opacity: 1; }
+@keyframes selectIn {
+  from { opacity: 0; transform: translateY(-3px) scale(.98); }
+}
+/* Key 的状态行：只说「存没存、能不能用」，不做解释。能力不全用暖色提醒，但别用报错红 */
+.stat { font-size: 12px; color: var(--ink-3); margin-top: 4px; line-height: 1.45; }
+.stat.bad { color: var(--warn); }
+/* 两把 Key 成组：一个浅底框把「Web 服务」「Web 端」括在一起，看得出它们是一套东西 */
+.keybox {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--chip);
+}
+.keybox .field:last-child { margin-bottom: 0; }
+
+/* 同一行并排的控件：下拉定宽，输入框吃掉剩下的，按钮不缩。
+   行内按钮跟输入框同高（32px），这一排才是一条水平线 */
+.row { display: flex; gap: 8px; align-items: center; }
+.row > input { flex: 1 1 auto; min-width: 0; }
+.row > .w-narrow { width: 92px; flex: none; }
+.row > button { flex: none; height: var(--ctl); padding: 0 16px; font-size: 14px; }
+.mt { margin-top: 8px; }
+
+/* 底部按钮：整块面板现在一屏放得下（说明都删了），所以照常排在最后；
+   窗口特别矮时面板自己滚，按钮跟着滚到最下面就行 */
+.settings .foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+/* 版本号 + 重启服务：同一行，按钮贴右沿。局域网打开时按钮由 JS 隐藏，
+   因为服务端只接受回环来源的重启请求 */
+.ver-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ver-row .ver { min-width: 0; }
+.ver-row button { flex: none; margin-top: -2px; height: var(--ctl-sm); padding: 0 12px; font-size: 13px; }
+
+/* 版本号：放在「关于」分组里，正常可读的字号 */
+.settings .ver {
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+  line-height: 1.6;
+}
+.settings .ver small {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+
+/* 地址对话框：跟设置面板同一套模态语言（遮罩 + 玻璃板 + 上浮入场）。
+   它替掉原生 window.prompt —— 原生弹窗没法沿用这套配色，内嵌浏览器里还会被直接拦掉 */
+.dlg {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--scrim);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .16s ease, visibility 0s linear .16s;
+}
+.dlg.show {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity .16s ease;
+}
+.dlg .dlg-box {
+  width: min(400px, 100%);
+  padding: 20px 24px 16px;
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--shadow-float);
+  transform: translateY(6px) scale(.97);
+  opacity: 0;
+  transition: transform .18s ease, opacity .18s ease;
+}
+.dlg.show .dlg-box { transform: none; opacity: 1; }
+html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
+.dlg h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+.dlg .field { margin-bottom: 0; }
+.dlg-hint { margin-top: 4px; font-size: 11px; color: var(--ink-3); }
+/* 书名匹配到的多个版本：对话框里往下排，超过一定高度自己滚。
+   300px 是按一行三条信息（书名 / 出版社+ISBN / 查这本）约 74px 算的，
+   露出四条、第五条起个话头，不至于打开对话框只看得见一条半 */
+.dlg-cands {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+.dlg-cands[hidden] { display: none; }
+/* 候选行是 <button>：全局 button 那套单行胶囊参数（height:36px、line-height:1、
+   align-items/justify-content:center、white-space:nowrap）得逐条顶掉。
+   只顶 height 不够——继承来的 line-height:1 会让书名和副行贴成叠字 */
+.pcand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  height: auto;
+  gap: 3px;
+  line-height: 1.45;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.pcand:hover { border-color: var(--brand-line); background: var(--brand-soft); }
+.pcand:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
+.pc-t { font-size: 13px; color: var(--ink); }
+.pc-s { font-size: 11px; color: var(--ink-3); }
+/* 两行各自撑满行宽再截断：不截的话长书名会从 nowrap 里捅出去，压到相邻候选行 */
+.pc-t, .pc-s {
+  align-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--brand);
+}
+.pc-go .ic { width: 12px; height: 12px; }
+.dlg-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* 设置面板的「从其他设备访问」：一行说明 + 开关，开启后下面接二维码和网址 */
+.lan-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.lan-switch-txt { flex: 1 1 auto; min-width: 0; }
+.lan-switch-txt label { display: block; font-size: 13px; color: var(--ink); }
+.lan-switch .stat { margin-top: 2px; }
+.lan-switch .tgl { flex: none; }
+/* 切完开关不再有「要不要现在重启」那条：保存即生效，状态行自己说结果 */
+.lan-row { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; }
+.lan-row[hidden] { display: none; }
+.lan-qr {
+  flex: none;
+  width: 80px; height: 80px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.lan-qr svg { display: block; width: 100%; height: 100%; }
+.lan-txt { min-width: 0; }
+.lan-url {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--brand);
+  word-break: break-all;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.lan-url:hover { text-decoration: underline; }
+.lan-note { font-size: 11px; line-height: 1.5; color: var(--ink-3); }
+
+/* 最近地址：手填过的地点，点一下直接设位置（手机局域网没有定位，这条最省事） */
+.addr-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.addr-recent[hidden] { display: none; }
+.ar-lbl { font-size: 11px; color: var(--ink-3); }
+.addr-recent .chip {
+  height: 28px;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.addr-recent .chip:hover { color: var(--ink); border-color: var(--line-strong); }
+
+/* 外观：亮色 / 暗色 两段式开关 */
+/* 进度条（设置面板补坐标用）。注意不能叫 .bar —— 结果区提示条是 .note.bar，
+   撞名会把 height:5px/overflow:hidden 套到提示条上，文字被拦腰裁掉 */
+
+/* ---------------------------------------------------------------- 提示条 */
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%) translateY(10px);
+  background: #1f2429;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  max-width: min(680px, 90vw);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s, transform .18s;
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+  word-break: break-all;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.err { background: #7d2626; }
+#toast.ok { background: var(--brand); }
+
+.spin {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid rgba(10, 92, 138, .25);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: sp .7s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes sp { to { transform: rotate(360deg); } }
+
+.loading-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 16px 2px; color: var(--ink-3); font-size: 13px;
+}
+
+/* 单列（窄窗口 / 手机）：改成整页一起滚。只有结果区自己滚的话，书单区永远钉在顶上，
+   翻的时候得在一小块里抠着划。整页滚，让位放在 body 上，滚走就滚走了 */
+/* 面板窄时第一行右侧那簇会顶掉馆名：用时先让位（导航图标照样能带过去） */
+/* 骑行用时原来在 ≤1100px 整体隐藏（挂在第一行挤），挪到第二行后窄屏照样显示，
+   第二行本来就是可换行的灰字行 */
+
+@media (max-width: 860px) {
+  /* 高度改成 auto 才能整页滚；背景铺在 html 上，内容不满一屏时底下不会露白 */
+  html { height: auto; background: var(--bg); }
+  body { height: auto; min-height: 100vh; min-height: 100dvh; padding-top: var(--hdr-h, 60px); }
+  main { grid-template-columns: 1fr; height: auto; --aside-w: 0px; }   /* 单列：地图背景不该再让出书单的宽度 */
+  #aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 44vh; padding-top: 0; }
+  section.result { height: auto; overflow: visible; padding-top: 0; }
+  /* 单列时结果区撑满（40% 的留白是桌面的事），两侧各留 16 */
+  .result-inner { width: auto; min-width: 0; max-width: none; --gut: 16px; padding: 16px var(--gut) 0; }
+  /* 药丸不再占满：跟右侧两颗圆钮平分一行，留出「这是一颗药丸」的形状 */
+  .qpill { flex: 1 1 auto; width: auto; }
+  .loc { max-width: 140px; }
+}
+
+/* ---------------------------------------------------------------- 手机 */
+
+/* 断点 640 跟 app.js 里的 NARROW_W 必须一致：那边靠它默认关地图、选中书后滚到结果。
+   竖屏常见 360~430，横屏 640~900 —— 640 以下按手机处理 */
+@media (max-width: 640px) {
+  /* 手机：一行装不下「药丸 + 地名 + 两颗钮」。
+     第一行整行给药丸，第二行是「地名（占满剩下的）+ 两颗圆钮」，拇指够得着、也不挤 */
+  header { padding: 10px 12px 6px; flex-wrap: wrap; gap: 8px; row-gap: 2px; }
+  .qwrap { flex: 1 1 100%; order: 1; gap: 0; min-width: 0; }
+  .bacts { order: 2; flex: 1 1 100%; justify-content: flex-end; gap: 8px; }
+  /* 地名跟三枚圆钮同一行、同高（44px）：以前是 20px 纯文字行，高低差一截。
+     glass 底跟圆钮同款；宽度跟着地名长短自适应（继承桌面 190px 上限），超长截断 */
+  .loc {
+    height: var(--ctl-touch);
+    padding: 0 12px 0 8px;
+    font-size: 13px;
+  }
+  .qpill { flex: 1 1 auto; width: auto; height: var(--ctl-touch); padding: 0 4px 0 12px; }
+  /* 16px：iOS 聚焦时才不会把整个页面放大 */
+  .qpill input { font-size: 16px; }
+  .qpill .qgo { width: var(--ctl); height: var(--ctl); }
+  .rbtn { width: var(--ctl-touch); height: var(--ctl-touch); }
+  .sug { min-width: 0; max-height: min(52vh, 360px); }
+
+  /* 书单在上、结果在下：书单压到 1/3 屏高，剩下的都给结果 */
+  #aside { max-height: 34vh; }
+  .aside-head { padding: 8px 12px 4px 16px; }
+  /* 书架头两颗钮在手机上露出文字（title 悬停触屏看不到）：圆点 → 带字小胶囊。
+     最右那颗随收起状态在「收起/展开」之间换字，brief 只换 .lbl，title/aria 保持全称 */
+  .aside-head button.icon-btn.with-lbl {
+    width: auto; height: var(--ctl); padding: 0 12px; border-radius: 999px;
+    font-size: 12px; gap: 8px; line-height: 1.4;
+  }
+  .aside-head button.icon-btn.with-lbl .lbl { display: inline; }
+  /* 触屏没有 hover：移除键给足 32px 的点击面，也不再压到 .45 透明 */
+  .bk-x { width: 32px; height: 32px; opacity: .6; }
+  section.result { padding-bottom: 64px; }
+  .result-inner { --gut: 14px; padding: 14px var(--gut) 0; }
+  .result-inner.has-map { padding: 14px var(--gut) 0; }
+
+  .res-head { gap: 12px; }
+  .res-head img, .res-head .cover { width: 44px; height: 62px; }
+  .res-head .cov { width: 44px; height: 62px; }
+  .res-head h1 { font-size: 16px; margin-bottom: 4px; }
+  .toolbar { gap: 8px; padding: 8px 0; }
+  /* 手机上第二行装不下一整句，必然折行——这时 | 会跑到新行行首，看着像标点错位。
+     窄屏干脆不用分隔点，改回纯间距，折到哪一行都干净 */
+  .card .meta > * + *::before,
+  .card .badges > * + *::before,
+  .card .foot-body > * + *::before,
+  .card .callnos > * + *::before { content: none; margin: 0; }
+  .card .meta,
+  .card .badges,
+  .card .foot-body,
+  .card .foot .callnos { column-gap: 8px; }
+
+  /* 卡片：第一行「序号 馆名 拨号/导航 距离」，第二行「标签 …… 骑行用时」。
+     用时挪到第二行后，第一行只剩馆名一处需要抢宽度，390px 下也能有十来个字。
+     第三行默认收起，触屏没有 hover，靠「索书号 · 库室」那枚按钮展开。
+     行与行之间隔着 12px 间距（卡片自己的 margin-bottom），底色要连这段一起盖：
+     第二行起上沿多让 12px，于是被点中的那行从上一道分隔线铺到自己那道，
+     行首不会在空隙里露一条白 */
+  .card { padding: 12px; margin-bottom: 12px; }
+  .card + .card { --seat-up: 12px; }
+  .card .row1 { gap: 8px; }
+  .card .acts { gap: 0; }
+  .card .meta { margin-top: 4px; }
+  .card .foot-body { flex-wrap: wrap; row-gap: 4px; }
+  .card .foot .callnos { max-width: 100%; flex-wrap: wrap; }
+  /* 桌面 18px 的胶囊当文字链正好，触屏点不准——两枚展开钮在手机上补到 32px */
+  .card .foot-tgl,
+  .db-vers-head { min-height: 32px; }
+
+  /* 设置面板：手机上从底部升起，别在中间留一圈缝 */
+  .settings { padding: 0; align-items: flex-end; }
+  .settings .box {
+    width: 100%;
+    max-height: 90vh;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  /* 地址对话框跟设置面板同一个手机形态：底部升起 */
+  .dlg { padding: 0; align-items: flex-end; }
+  .dlg .dlg-box {
+    width: 100%;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  #toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
+}
+
+/* ---------------------------------------------------------------- 书单折叠 */
+
+/* 收起：桌面留 36px 竖条（竖排标题 + 箭头），点一下叫回来；手机上收成 42px 横条。
+   36 = 图标 16 + 两侧各 10 的呼吸位：再窄图标贴边，再宽就白占结果区的宽度。
+   收起后书单里的一切（书列表、组标题动作）都不显示，只剩这条 rail 当入口 */
+.aside-rail { display: none; }
+
+main.aside-min { --aside-w: 36px; }
+/* 收起后书单里的一切都不显示，只剩这条 rail 当入口 */
+main.aside-min .aside-head,
+main.aside-min .booklist { display: none; }
+
+main.aside-min .aside-rail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+main.aside-min .aside-rail:hover { background: var(--hover); color: var(--ink); }
+main.aside-min .aside-rail:focus-visible { outline: 2px solid var(--brand-line); outline-offset: -2px; }
+.rail-ico { display: inline-flex; }
+.rail-ico .ic { width: 16px; height: 16px; }
+.rail-txt { writing-mode: vertical-rl; letter-spacing: 2px; }
+
+/* 单列布局（≤860）下 grid 只有一列，rail 改成横向一条压在结果区上方 */
+@media (max-width: 860px) {
+  main.aside-min { grid-template-columns: 1fr; }
+  main.aside-min #aside { height: 42px; max-height: 42px; border-right: 0; }
+  main.aside-min .aside-rail { flex-direction: row; gap: 6px; }
+  main.aside-min .rail-txt { writing-mode: horizontal-tb; letter-spacing: .5px; }
+}
+
+/* ---------------------------------------------------------------- 动效降级 */
+
+/* 系统开了「减弱动态效果」时，装饰性动画全关：卡片错峰、盖戳、脉冲都免，
+   状态变化改成一步到位（opacity 过渡保留极短一档，避免界面像坏了） */
+@media (prefers-reduced-motion: reduce) {
+  .card { animation: none; }
+  .cov .stamp.stamp-anim { animation: none; }
+  .card.hit::before { animation: none; }
+  .res-head,
+  .geobar,
+  .empty-state,
+  .note.bar { animation: none; }
+  .map-bg { transition: none; }
+  .seg-thumb { transition: none; }
+  .select-menu { animation: none; }
+}
+/* 重新查询进行中：结果区整体置灰一档，查完（renderResult）恢复。
+   置灰加在 #result 上（innerHTML 换不掉它），目标选 .result-inner——
+   查询先是 loading 骨架（renderResultShell，里面只有 .loading-row 没有 .res-list），
+   选 .res-list 的话骨架那几秒根本灰不起来 */
+#result .result-inner { transition: opacity .2s ease; }
+#result.refreshing .result-inner { opacity: .55; }

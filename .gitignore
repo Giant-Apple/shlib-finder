@@ -1,0 +1,28 @@
+# Local config (map Keys, doulist URL)
+config.json
+
+# Scraped caches & runtime artefacts: book lists, holdings, covers, geocode addresses
+# all belong to a specific person or query — keep them out of the repo.
+# Exception: data/libraries.json (reference data for branch locations), shipped with
+# the repo; see THIRD-PARTY.md.
+data/*
+!data/libraries.json
+
+# Packaging output, screenshots, backups, bundled runtime
+dist/
+shots/
+_bak/
+runtime/
+_bak*.png
+_bak*.json
+
+# Interpreter artefacts
+__pycache__/
+*.py[cod]
+*.log
+*.tmp
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+desktop.ini
