@@ -19,7 +19,8 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'web'))
 import server  # noqa: E402
 
-URL = 'https://www.douban.com/doulist/123456/'  # 假豆列号，@@gate-example@@
+DOULIST_ID = '123456'  # 占位豆列号，不是真实豆列
+URL = server.doulist_url_of(DOULIST_ID)
 
 
 def page_html(ids):

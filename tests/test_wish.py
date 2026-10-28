@@ -18,7 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'web'))
 import server  # noqa: E402
 
-WISH = 'https://book.douban.com/people/10001/wish'  # 假账号 ID，@@gate-example@@
+WISH = 'https://book.douban.com/people/YOUR_DOUBAN_ID/wish'  # 占位账号，不是真实地址
 # 影视「想看」的同形地址，用来验证它会被拒绝而不是被当成图书想读
 MOVIE_WISH = WISH.replace('book.', 'movie.')
 

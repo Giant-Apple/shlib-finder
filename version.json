@@ -2,5 +2,5 @@
   "name": "shlib-finder",
   "version": "0.1.1",
   "build": "",
-  "note": "上图馆藏查询 · 版本号唯一来源。server.py 启动时读它，经 /api/config 交给页面，只在设置面板底部显示。日常提交不要改，发版时由 tools/release.ps1 统一改（见 docs/internals.md 的发版节奏）。"
+  "note": "上图馆藏查询 · 版本号唯一来源：web/server.py 启动时读它，经 /api/config 交给页面，只在设置面板底部显示。version 只在发版时改，平时不用动；build 是便携包的构建日期（yyyyMMdd），由打包时写入，源码里留空——留空时界面不显示「构建」。"
 }
