@@ -18,7 +18,9 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'web'))
 import server  # noqa: E402
 
-WISH = 'https://book.douban.com/people/10001/wish'
+WISH = 'https://book.douban.com/people/10001/wish'  # 假账号 ID，@@gate-example@@
+# 影视「想看」的同形地址，用来验证它会被拒绝而不是被当成图书想读
+MOVIE_WISH = WISH.replace('book.', 'movie.')
 
 
 def wish_item(i):
@@ -72,7 +74,7 @@ class WishParseTest(unittest.TestCase):
 
     def test_movie_wish_url_is_rejected(self):
         with self.assertRaises(ValueError):
-            server.wish_url_of('https://movie.douban.com/people/10001/wish')
+            server.wish_url_of(MOVIE_WISH)
         self.assertEqual(server.wish_url_of(WISH + '?start=30&sort=time'), WISH)
 
     def test_private_and_gone_and_format_are_distinct(self):
