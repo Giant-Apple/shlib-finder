@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>上图馆藏查询 · 把豆瓣书单变成一张「现在能借」的地图</title>
+<meta name="description" content="豆瓣豆列、想读和手动加的书合成一个书架，按 ISBN 查上海图书馆和全市分馆有没有、能不能借，按远近排好并标在地图上。装在自己电脑上，不用注册。">
+<meta name="theme-color" content="#f2f7fa">
+<meta property="og:type" content="website">
+<meta property="og:title" content="上图馆藏查询 · 豆瓣书单 → 上海图书馆在架地图">
+<meta property="og:description" content="豆列、想读、手动加的书合成一个书架；按 ISBN 查上图与全市分馆有没有、能不能借，按远近排好并标在地图上。装在自己电脑上，书架和配置只留在这台电脑上。">
+<meta property="og:image" content="https://raw.githubusercontent.com/Giant-Apple/shlib-finder/main/docs/feature/01-hero.jpg">
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #f2f7fa;
+    --card: #ffffff;
+    --ink: #152a34;
+    --ink-2: #526974;
+    --ink-3: #7b8f9a;
+    --brand: #0a5c8a;
+    --brand-2: #0a7ab2;
+    --brand-soft: #e8f3f9;
+    --brand-line: #cfe3ef;
+    --line: #dee9ef;
+    --mint-soft: #e9f6f1;
+    --radius: 20px;
+    --shadow: 0 34px 80px -34px rgba(16, 62, 86, .32), 0 2px 8px rgba(16, 62, 86, .05);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", Roboto, sans-serif;
+    --mono: "SFMono-Regular", ui-monospace, Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; scroll-padding-top: 88px; }
+
+  body {
+    margin: 0;
+    font-family: var(--font);
+    color: var(--ink);
+    line-height: 1.65;
+    background:
+      radial-gradient(1100px 620px at 88% -8%, #e2f4ed 0%, rgba(226, 244, 237, 0) 62%),
+      radial-gradient(900px 520px at -8% 4%, #e6f0f9 0%, rgba(230, 240, 249, 0) 60%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  a { color: var(--brand); }
+
+  img { display: block; max-width: 100%; height: auto; }
+
+  .wrap { width: min(1160px, calc(100% - 48px)); margin: 0 auto; }
+
+  .skip {
+    position: absolute; left: -9999px; top: 0; z-index: 100;
+    background: var(--brand); color: #fff; padding: 10px 16px; border-radius: 0 0 10px 0;
+  }
+  .skip:focus { left: 0; }
+
+  :focus-visible { outline: 3px solid rgba(10, 122, 178, .45); outline-offset: 3px; border-radius: 6px; }
+
+  /* ---------------------------------------------------------------- 顶栏 */
+
+  .top {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(242, 247, 250, .82);
+    border-bottom: 1px solid rgba(222, 233, 239, .8);
+    backdrop-filter: saturate(1.4) blur(14px);
+    -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  }
+  .top-in {
+    display: flex; align-items: center; gap: 28px;
+    height: 66px;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: 10px;
+    color: var(--ink); text-decoration: none; font-weight: 650;
+    letter-spacing: .01em; font-size: 16px; white-space: nowrap;
+  }
+  .brand img { width: 26px; height: auto; }
+  .nav { display: flex; align-items: center; gap: 24px; margin-left: auto; }
+  .nav a {
+    color: var(--ink-2); text-decoration: none; font-size: 14.5px;
+    padding: 4px 2px; border-bottom: 2px solid transparent;
+    transition: color .16s ease, border-color .16s ease;
+  }
+  .nav a:hover { color: var(--brand); border-bottom-color: var(--brand-line); }
+  .top-acts { display: flex; align-items: center; gap: 10px; margin-left: 8px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 18px; border-radius: 11px; border: 1px solid transparent;
+    font-family: inherit; font-size: 14.5px; font-weight: 600; line-height: 1.2;
+    text-decoration: none; cursor: pointer; white-space: nowrap;
+    transition: background .16s ease, border-color .16s ease, transform .16s ease, box-shadow .16s ease;
+  }
+  .btn svg { width: 17px; height: 17px; flex: none; }
+  .btn-primary {
+    background: var(--brand); color: #fff;
+    box-shadow: 0 10px 22px -12px rgba(10, 92, 138, .8);
+  }
+  .btn-primary:hover { background: #084c72; transform: translateY(-1px); }
+  .btn-ghost { background: rgba(255, 255, 255, .75); color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover { border-color: var(--brand-line); color: var(--brand); background: #fff; }
+  .btn-icon { width: 40px; height: 40px; padding: 0; border-radius: 11px; }
+  .btn-icon svg { width: 19px; height: 19px; }
+
+  /* ---------------------------------------------------------------- 首屏 */
+
+  .hero { padding: 74px 0 40px; }
+  .hero-grid {
+    display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+    gap: 58px; align-items: center;
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--brand); background: var(--brand-soft);
+    border: 1px solid var(--brand-line); border-radius: 999px;
+    padding: 5px 12px; font-weight: 650;
+  }
+  .eyebrow svg { width: 14px; height: 14px; }
+  h1 {
+    margin: 20px 0 18px;
+    font-size: clamp(32px, 4vw, 52px);
+    line-height: 1.2; letter-spacing: -.02em; font-weight: 750;
+  }
+  h1 .hl {
+    color: var(--brand); white-space: nowrap;
+    background: linear-gradient(transparent 62%, rgba(10, 122, 178, .16) 62%);
+    padding: 0 2px;
+  }
+  .lede { margin: 0 0 28px; color: var(--ink-2); font-size: 16.5px; max-width: 34em; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .cta-note { margin: 16px 0 0; font-size: 13px; color: var(--ink-3); }
+  .cta-note code {
+    font-family: var(--mono); font-size: 12.5px;
+    background: rgba(255, 255, 255, .8); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px;
+  }
+
+  .shot {
+    border-radius: 22px; overflow: hidden; background: #fff;
+    border: 1px solid rgba(255, 255, 255, .9);
+    box-shadow: var(--shadow);
+  }
+  .shot img { width: 100%; }
+
+  /* ---------------------------------------------------------------- 数字条 */
+
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 18px; margin: 34px 0 0; padding: 22px 6px 0;
+    border-top: 1px solid var(--line);
+  }
+  .stat strong {
+    display: block; font-size: 24px; letter-spacing: -.01em;
+    color: var(--ink); font-weight: 700; line-height: 1.2;
+  }
+  .stat span { display: block; margin-top: 4px; font-size: 13px; color: var(--ink-3); }
+
+  /* ---------------------------------------------------------------- 通用区块 */
+
+  section { scroll-margin-top: 88px; }
+  .band { padding: 92px 0; }
+  .band-tight { padding: 70px 0; }
+  .sec-head { max-width: 640px; margin-bottom: 40px; }
+  .kicker {
+    font-size: 12.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--brand-2); font-weight: 700;
+  }
+  h2 {
+    margin: 8px 0 14px; font-size: clamp(26px, 3.1vw, 36px);
+    line-height: 1.25; letter-spacing: -.015em; font-weight: 720;
+    text-wrap: balance;
+  }
+  .sec-head p { margin: 0; color: var(--ink-2); font-size: 16px; }
+
+  /* ---------------------------------------------------------------- 功能卡 */
+
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    padding: 26px 26px 24px;
+    transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  }
+  .card:hover {
+    border-color: var(--brand-line);
+    box-shadow: 0 22px 46px -32px rgba(16, 62, 86, .45);
+    transform: translateY(-2px);
+  }
+  .card-ico {
+    width: 40px; height: 40px; border-radius: 11px;
+    background: var(--brand-soft); color: var(--brand);
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-bottom: 16px;
+  }
+  .card-ico svg { width: 20px; height: 20px; }
+  .card h3 { margin: 0 0 8px; font-size: 18px; letter-spacing: -.005em; font-weight: 680; }
+  .card p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+
+  /* ---------------------------------------------------------------- 图文分栏 */
+
+  .split {
+    display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+    gap: 60px; align-items: center;
+  }
+  .split.rev .split-media { order: -1; }
+  .split-copy h2 { margin-top: 6px; }
+  .split-copy p { color: var(--ink-2); font-size: 16px; margin: 0 0 16px; }
+  .ticks { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 10px; }
+  .ticks li { display: flex; gap: 10px; align-items: flex-start; color: var(--ink-2); font-size: 14.5px; }
+  .ticks svg { width: 17px; height: 17px; flex: none; margin-top: 3px; color: var(--brand-2); }
+
+  /* ---------------------------------------------------------------- 隐私 */
+
+  .privacy-panel {
+    background: linear-gradient(150deg, #ffffff 0%, #f2f9f5 62%, #eef7f3 100%);
+    border: 1px solid var(--brand-line); border-radius: 26px;
+    padding: 46px 46px 40px; box-shadow: 0 30px 70px -46px rgba(16, 62, 86, .35);
+  }
+  .privacy-head { max-width: 660px; }
+  .privacy-head p { color: var(--ink-2); margin: 0; font-size: 16px; }
+  .privacy-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-top: 34px; }
+  .privacy-item { padding-top: 18px; border-top: 1px solid rgba(10, 92, 138, .14); }
+  .privacy-item h3 {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 8px; font-size: 15.5px; font-weight: 680;
+  }
+  .privacy-item h3 svg { width: 17px; height: 17px; color: var(--brand); flex: none; }
+  .privacy-item p { margin: 0; font-size: 14px; color: var(--ink-2); }
+  .privacy-note {
+    margin: 30px 0 0; padding-top: 18px; border-top: 1px dashed rgba(10, 92, 138, .2);
+    font-size: 13.5px; color: var(--ink-3);
+  }
+
+  /* ---------------------------------------------------------------- 上手 */
+
+  .start-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  .start-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    padding: 28px;
+  }
+  .start-card .tag {
+    display: inline-block; font-size: 12px; font-weight: 650; color: var(--brand);
+    background: var(--brand-soft); border-radius: 999px; padding: 3px 10px;
+    margin-bottom: 14px;
+  }
+  .start-card h3 { margin: 0 0 16px; font-size: 18px; font-weight: 680; }
+  .steps { list-style: none; counter-reset: step; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .steps li {
+    counter-increment: step; display: flex; gap: 12px;
+    color: var(--ink-2); font-size: 14.5px;
+  }
+  .steps li::before {
+    content: counter(step);
+    flex: none; width: 22px; height: 22px; margin-top: 1px;
+    border-radius: 50%; background: var(--brand-soft); color: var(--brand);
+    font-size: 12px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .steps b { color: var(--ink); font-weight: 620; }
+  pre {
+    margin: 4px 0 14px; padding: 18px 20px; overflow-x: auto;
+    background: #102a36; color: #dff0f6; border-radius: 14px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.75;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  pre .cm { color: #7fa8b8; }
+  .start-foot { margin: 0; font-size: 13px; color: var(--ink-3); }
+  .start-foot code { font-family: var(--mono); font-size: 12.5px; }
+  .setup-line {
+    margin: 26px 0 0; padding: 18px 22px; border-radius: 14px;
+    background: rgba(255, 255, 255, .7); border: 1px solid var(--line);
+    color: var(--ink-2); font-size: 14px;
+  }
+  .setup-line b { color: var(--ink); font-weight: 620; }
+
+  /* ---------------------------------------------------------------- FAQ */
+
+  .faq { display: grid; gap: 12px; max-width: 860px; }
+  .faq details {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 0 22px; transition: border-color .16s ease;
+  }
+  .faq details[open] { border-color: var(--brand-line); }
+  .faq summary {
+    list-style: none; cursor: pointer; padding: 18px 0;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    font-size: 15.5px; font-weight: 620; color: var(--ink);
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  /* 「未知」是界面上的一个词，窄屏换行时不能从中间拆开 */
+  .faq .keep { white-space: nowrap; }
+  .faq summary svg { width: 18px; height: 18px; color: var(--ink-3); flex: none; transition: transform .18s ease; }
+  .faq details[open] summary svg { transform: rotate(180deg); color: var(--brand); }
+  .faq .a { padding: 0 0 20px; color: var(--ink-2); font-size: 14.5px; }
+  .faq .a p { margin: 0 0 10px; }
+  .faq .a p:last-child { margin-bottom: 0; }
+  .faq .a code { font-family: var(--mono); font-size: 12.5px; background: var(--brand-soft); border-radius: 5px; padding: 1px 5px; }
+
+  /* ---------------------------------------------------------------- 页脚 */
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 54px; margin-top: 30px; }
+  .foot-top { display: flex; flex-wrap: wrap; gap: 22px; align-items: center; justify-content: space-between; }
+  .foot-brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 650; }
+  .foot-brand img { width: 22px; }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13.5px; }
+  .foot-links a { color: var(--ink-2); text-decoration: none; }
+  .foot-links a:hover { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+  .foot-note { margin: 22px 0 0; max-width: 760px; color: var(--ink-3); font-size: 12.5px; line-height: 1.8; }
+  .foot-note strong { color: var(--ink-2); font-weight: 620; }
+
+  /* ---------------------------------------------------------------- 响应式 */
+
+  @media (max-width: 980px) {
+    .hero { padding-top: 52px; }
+    .hero-grid, .split { grid-template-columns: 1fr; gap: 40px; }
+    .split.rev .split-media { order: 0; }
+    .nav { display: none; }
+    /* 导航收起后，右上角的下载按钮需要自己顶到右边 */
+    .top-acts { margin-left: auto; }
+    .privacy-grid { grid-template-columns: 1fr; gap: 22px; }
+    .privacy-panel { padding: 34px 28px 30px; }
+    .band { padding: 72px 0; }
+  }
+
+  @media (max-width: 720px) {
+    .wrap { width: min(1160px, calc(100% - 36px)); }
+    .top-in { height: 60px; gap: 14px; }
+    .brand { font-size: 15px; }
+    .brand img { width: 23px; }
+    .top .btn-icon { display: none; }
+    .top .btn-primary { padding: 9px 14px; font-size: 13.5px; }
+    h1 { font-size: clamp(30px, 8vw, 40px); }
+    /* 26px 时「查书这件事，本来不该这么费劲」会在 390 宽下多出一个字换行 */
+    h2 { font-size: clamp(23px, calc(3.1vw + 12px), 30px); }
+    .lede { font-size: 15.5px; }
+    .stats { grid-template-columns: repeat(2, 1fr); gap: 18px 14px; }
+    .stat strong { font-size: 20px; }
+    .cards, .start-grid { grid-template-columns: 1fr; }
+    .card { padding: 22px; }
+    .privacy-panel { border-radius: 20px; padding: 28px 22px 24px; }
+    .band { padding: 60px 0; }
+    .band-tight { padding: 52px 0; }
+    .foot-top { align-items: flex-start; }
+    .faq summary { font-size: 15px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="#top">
+      <img src="shl-logo.png" alt="" width="26" height="26">
+      上图馆藏查询
+    </a>
+    <nav class="nav" aria-label="页面导航">
+      <a href="#features">功能</a>
+      <a href="#shelf">书架</a>
+      <a href="#privacy">隐私</a>
+      <a href="#start">怎么用</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+    <div class="top-acts">
+      <a class="btn btn-ghost btn-icon" href="https://github.com/Giant-Apple/shlib-finder"
+         target="_blank" rel="noopener noreferrer" aria-label="在 GitHub 查看源码" title="GitHub 源码">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+      </a>
+      <a class="btn btn-primary" href="https://github.com/Giant-Apple/shlib-finder/releases/latest"
+         target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+        下载
+      </a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <div id="top"></div>
+
+  <!-- 首屏 -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div>
+          <span class="eyebrow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+            非官方项目 · 在你自己的电脑上运行
+          </span>
+          <h1>豆瓣书单里的书，<br>哪几本<span class="hl">现在能借</span>？</h1>
+          <p class="lede">
+            豆列、想读、手动加的书合成一个书架；按 ISBN 查上海图书馆和全市分馆有没有、能不能借，
+            再按远近排好、标在地图上。
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://github.com/Giant-Apple/shlib-finder/releases/latest"
+               target="_blank" rel="noopener noreferrer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+              下载 Windows 版
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/Giant-Apple/shlib-finder"
+               target="_blank" rel="noopener noreferrer">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+              源码与文档
+            </a>
+          </div>
+          <p class="cta-note">
+            Windows 解压即用；macOS / Linux 需
+            <code>Python 3.9+</code>。
+          </p>
+        </div>
+        <div>
+          <div class="shot">
+            <img src="feature/01-hero.jpg" width="1600" height="1006"
+                 alt="上图馆藏查询界面：左侧是书架，中间是某一本书在各馆的在架数量与距离，右侧是标出各馆位置的地图。">
+          </div>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><strong>479</strong><span>家馆，都有地址、电话和开放时间</span></div>
+        <div class="stat"><strong>每册</strong><span>在架还是借出、能不能外借、索书号</span></div>
+        <div class="stat"><strong>3 种</strong><span>书单来源：豆列、想读、手动添加</span></div>
+        <div class="stat"><strong>不上传</strong><span>不登录、不统计，书单只在你电脑上</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 功能 -->
+  <section class="band" id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="kicker">它做什么</span>
+        <h2>查书这件事，本来不该这么费劲</h2>
+        <p>不用在豆瓣、上图网站和地图之间来回切；书单、馆藏、远近放在同一屏。</p>
+      </div>
+      <div class="cards">
+        <article class="card">
+          <span class="card-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h8"/><path d="M8 11h5"/></svg>
+          </span>
+          <h3>三种来源，一个书架</h3>
+          <p>豆列、「想读」和手动加的书放在一起；豆列和想读里重复的，只算豆列。书单很长时先显示前面一部分，随时可以接着看；每组能收起，重开页面还是原样。</p>
+        </article>
+        <article class="card">
+          <span class="card-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/><path d="M8 11h6"/></svg>
+          </span>
+          <h3>查到「哪一本能借」</h3>
+          <p>按 ISBN 查每家馆的每一册：在架还是借出、能不能外借、在哪个阅览室、索书号。多个版本先选再查；结果能只看「可借」或「营业中」。</p>
+        </article>
+        <article class="card">
+          <span class="card-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
+          </span>
+          <h3>按距离排，也在图上看</h3>
+          <p>479 家馆按远近排，10 公里内给出骑车时间。编号和地图上的点对应，点哪边都能定位，滚轮能缩放。点一下打电话，或打开高德导航。</p>
+        </article>
+        <article class="card">
+          <span class="card-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>
+          </span>
+          <h3>手机上也能查，只是不能改</h3>
+          <p>手机连着同一个 Wi-Fi，用浏览器打开就行，不用装 App；改设置要回电脑。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 书架 -->
+  <section class="band-tight" id="shelf">
+    <div class="wrap split">
+      <div class="split-copy">
+        <span class="kicker">书架</span>
+        <h2>书架先说清楚，再去查馆藏</h2>
+        <p>每本书一行：书名、作者 / 出版社 / 年份、ISBN。封面直接标状态：「都已借出」「仅馆内」「无此版本」。</p>
+        <ul class="ticks">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            没有 ISBN，先在上图网站按书名找同一版本
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            只有一个版本就直接查，有多个先让你选，没有就直说
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            从上图补的书名、作者只填空缺，不改你原来写的
+          </li>
+        </ul>
+      </div>
+      <div class="split-media">
+        <div class="shot">
+          <img src="feature/02-shelf-doulist.jpg" width="1600" height="1535" loading="lazy"
+               alt="书架界面：手动添加与豆瓣豆列分组，每本书带作者、出版社、年份和 ISBN，右侧是选中书的馆藏列表。">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 手机 -->
+  <section class="band-tight">
+    <div class="wrap split rev">
+      <div class="split-copy">
+        <span class="kicker">手机</span>
+        <h2>不用装 App，扫一下就能查</h2>
+        <p>在设置里打开「从其他设备访问」，会得到一个同一 Wi-Fi 下能用的网址和二维码。手机浏览器打开就是同一个界面。</p>
+        <ul class="ticks">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            只在你家的网络里用，不经过外部服务器
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            手机上只能查，改不了设置
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            默认只有这台电脑能打开，共享也只限同一 Wi-Fi
+          </li>
+        </ul>
+      </div>
+      <div class="split-media">
+        <div class="shot">
+          <img src="feature/03-phone.jpg" width="1600" height="1526" loading="lazy"
+               alt="手机上的界面：搜索栏、当前位置、书架入口，以及按远近排列的各馆在架数量与骑行时间。">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 隐私 -->
+  <section class="band" id="privacy">
+    <div class="wrap">
+      <div class="privacy-panel">
+        <div class="privacy-head">
+          <span class="kicker">本地优先</span>
+          <h2>查书这件事，不必交出什么</h2>
+          <p>程序装在你自己的电脑上：没有云端账号，也没有人统计你查了什么。</p>
+        </div>
+        <div class="privacy-grid">
+          <div class="privacy-item">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
+              不登录、不统计
+            </h3>
+            <p>只看豆瓣、上图公开的页面；不统计，也不自动更新。查书会连豆瓣、上图和高德；只有你点「检查更新」，才连 GitHub，偶尔走它的加速线路。</p>
+          </div>
+          <div class="privacy-item">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+              只存在你电脑上
+            </h3>
+            <p>书单、查过的结果、地址和高德 Key 都存在你自己电脑上的 <code>config.json</code> 和 <code>data</code> 文件夹里；手输的地址只在查距离时发给高德。</p>
+          </div>
+          <div class="privacy-item">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>
+              手机上也只能看
+            </h3>
+            <p>手机端只开放查询和地图，拿不到你的地址和 Key；不共享时，只有这台电脑能打开。</p>
+          </div>
+        </div>
+        <p class="privacy-note">
+          「想读」需在豆瓣设为公开，私密列表读不到。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 上手 -->
+  <section class="band" id="start">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="kicker">快速开始</span>
+        <h2>三分钟，从下载到第一本书</h2>
+        <p>Windows 下载免安装版；macOS / Linux 用源码运行。</p>
+      </div>
+
+      <div class="start-grid">
+        <div class="start-card">
+          <span class="tag">Windows · 推荐</span>
+          <h3>免安装，解压就能用</h3>
+          <ol class="steps">
+            <li><span>打开 <a href="https://github.com/Giant-Apple/shlib-finder/releases/latest" target="_blank" rel="noopener noreferrer">下载页</a>，选 <b>shlib-finder-v*.zip</b>。</span></li>
+            <li><span>解压，双击 <b>start-server.bat</b>。</span></li>
+            <li><span>浏览器会自动打开查询页面。</span></li>
+          </ol>
+          <p class="start-foot" style="margin-top:16px">关掉弹出的窗口，程序就停了；下次双击 <code>restart-server.bat</code>。</p>
+        </div>
+
+        <div class="start-card">
+          <span class="tag">macOS / Linux · 源码</span>
+          <h3>一行命令跑起来</h3>
+<pre><code>git clone https://github.com/Giant-Apple/shlib-finder.git
+cd shlib-finder
+./start-server.sh   <span class="cm"># Windows 用 start-server.bat</span></code></pre>
+          <p class="start-foot">需要 Python 3.9 或更新，不用装别的。出问题看 <code>data/server.log</code>；改完设置点「重启服务」。</p>
+        </div>
+      </div>
+
+      <p class="setup-line">
+        <b>第一次打开：</b>设位置（默认人民广场，地址只能填上海）→ 填豆列 / 想读链接（可选，需公开）→
+        填高德 Key（可选）→ 要用手机看时再打开共享。也可以直接改 <code>config.json</code>。
+      </p>
+    </div>
+  </section>
+
+  <!-- 常见问题 -->
+  <section class="band" id="faq">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="kicker">常见问题</span>
+        <h2>你可能想先知道的几件事</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>这个程序和上图、豆瓣是什么关系？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a"><p>没有关系。非官方项目，与上海图书馆、豆瓣无隶属或合作；馆藏数据来自公开页面。</p></div>
+        </details>
+        <details>
+          <summary>需要注册或登录吗？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a"><p>不需要。不填豆瓣链接，也能手动加书、按书名或 ISBN 查馆藏。</p></div>
+        </details>
+        <details>
+          <summary>「想读」是私密的，为什么读不到？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a"><p>只看公开的页面，不用你的账号登录。想读要在豆瓣设成公开；设成私密会直接告诉你，不会显示成空列表。</p></div>
+        </details>
+        <details>
+          <summary>查到的是最新的吗？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a"><p>是当场从上图取的；12 小时内会沿用上一次的结果，并标出上次是几点查的。想看最新的，点「重新查询」。</p></div>
+        </details>
+        <details>
+          <summary>一定要申请高德 Key 吗？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a">
+            <p>不填也能查馆藏，只是没有地址和远近；填了才有地图、骑车时间，也能按远近排。</p>
+            <p>高德有两种 Key，别拿错：算远近要用 <b>Web 服务</b>，显示地图要用 <b>Web 端（JS API）</b>，选错就不会有结果。</p>
+            <p>2021 年 12 月以后申请的地图 Key，还要配一个「安全密钥」，否则地图出不来。腾讯的 Key 只能把地址变成位置，给不了骑车时间。</p>
+          </div>
+        </details>
+        <details>
+          <summary><span>地址要在上海吗？距离为什么显示<span class="keep">「未知」？</span></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a">
+            <p>手输的地址只认上海，别的城市会直接拒绝。479 家馆里有 429 家能算出距离，其余显示<span class="keep">「距离未知」</span>；没设位置时，按能借的册数排。</p>
+            <p>开馆时间以各馆公告为准；节假日只提醒，去之前最好打个电话。</p>
+          </div>
+        </details>
+        <details>
+          <summary>macOS / Linux 和手机能用吗？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a">
+            <p>macOS / Linux 要按源码方式运行；免安装版只有 Windows。</p>
+            <p>手机连同一个 Wi-Fi，打开给出的网址或扫码，不用装 App。</p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <span class="foot-brand"><img src="shl-logo.png" alt="" width="22" height="22">上图馆藏查询</span>
+      <nav class="foot-links" aria-label="页脚链接">
+        <a href="https://github.com/Giant-Apple/shlib-finder" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://github.com/Giant-Apple/shlib-finder/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+        <a href="https://github.com/Giant-Apple/shlib-finder/blob/main/README.md" target="_blank" rel="noopener noreferrer">使用说明</a>
+        <a href="https://github.com/Giant-Apple/shlib-finder/blob/main/THIRD-PARTY.md" target="_blank" rel="noopener noreferrer">第三方说明</a>
+        <a href="https://github.com/Giant-Apple/shlib-finder/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">许可</a>
+        <a href="https://github.com/Giant-Apple/shlib-finder/issues" target="_blank" rel="noopener noreferrer">问题反馈</a>
+      </nav>
+    </div>
+    <p class="foot-note">
+      <strong>非官方项目</strong>，与上海图书馆、豆瓣无隶属或合作，仅供个人查询辅助。
+      馆藏数据来自公开页面，名称和标识归各自所有者；截图书目为虚构。源码以 PolyForm Noncommercial 1.0.0 发布。
+    </p>
+  </div>
+</footer>
+</body>
+</html>
