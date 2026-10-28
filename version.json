@@ -1,6 +1,6 @@
 {
   "name": "shlib-finder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "build": "",
-  "note": "上图馆藏查询 · 版本号唯一来源。server.py 启动时读它，经 /api/config 交给页面，只在设置面板底部显示。改功能顺手改 version。"
+  "note": "上图馆藏查询 · 版本号唯一来源。server.py 启动时读它，经 /api/config 交给页面，只在设置面板底部显示。日常提交不要改，发版时由 tools/release.ps1 统一改（见 docs/internals.md 的发版节奏）。"
 }

@@ -66,6 +66,18 @@
     eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 ' +
       '10.75 10.75 0 0 1-19.876 0" /> <circle cx="12" cy="12" r="3" />',
     'chevron-down': '<path d="m6 9 6 6 6-6" />',
+    'chevron-up': '<path d="m18 15-6-6-6 6" />',
+    // GitHub 官方标记（Simple Icons 的 24×24 路径，实心）：品牌标识用原样，
+    // 不拿线性图标凑；fill/stroke 就地覆盖，icon() 的默认描边对它不生效
+    github: '<path fill="currentColor" stroke="none" d="M12 .297c-6.63 0-12 5.373-12 12 ' +
+      '0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04' +
+      '-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 ' +
+      '1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605' +
+      '-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 ' +
+      '0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 ' +
+      '2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 ' +
+      '0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 ' +
+      '0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />',
     check: '<path d="M20 6 9 17l-5-5" />',
     'moon-star': '<path d="M18 5h4" /> <path d="M20 3v4" /> ' +
       '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />',
@@ -155,14 +167,16 @@
     nostore: false,
     cfgVersion: '',  // /api/config 带回的服务端版本，只在设置面板底部显示
     cfgBuild: '',    // 打包日期，同上
-    books: [],
+    // 两个豆瓣来源各一份状态：豆列和想读同时用、各自分批、各自报错。
+    // 每个来源的 books 是已载入的书，其余字段供书架分组画状态
+    lists: { doulist: newListState(), wish: newListState() },
     // 自己手动加的书：单独一组、和豆瓣书单并排放在书架上，不会写回豆瓣书单。
     // 存在本机（shlib.shelf），刷新还在；按 id 前缀 q: 区分
     manual: [],
     manualLoaded: false,
-    doubanLoading: false,
-    doubanEmpty: false,
-    doubanErr: '',
+    // 三组书架的收起状态：只隐藏组内内容，组标题和数量还在（长列表时留出视野）
+    folded: { manual: false, doulist: false, wish: false },
+    update: null,     // 最近一次「检查更新」的结果：按钮文案按它画
     activeId: null,
     spot: null,
     filter: 'avail',
@@ -229,9 +243,26 @@
     }
   }
 
-  // 书架 = 手动添加 + 豆瓣书单。手动添加放前面：
-  // 它是刚加进来、正在看的那本，往下滚一次才碰到豆瓣书单
-  function allBooks() { return S.manual.concat(S.books); }
+  // 一个豆瓣来源的空状态。豆列和想读各持一份，互不覆盖
+  function newListState() {
+    return {
+      books: [], name: '',
+      loading: false,
+      more: false,      // 正在抓下一批（「继续加载」）
+      empty: false,     // 还没配这个地址（不是「列表是空的」）
+      err: '',
+      warn: '',         // 非致命提示：豆瓣拦截但旧列表还在
+      complete: true,   // 已经抓到自然结尾
+      truncated: false, // 撞到安全上限，只载入了前 N 本
+      blockedFor: 0     // 豆瓣反爬冷却剩余秒数
+    };
+  }
+
+  // 书架 = 手动添加 + 豆瓣豆列 + 豆瓣想读。手动添加放前面：
+  // 它是刚加进来、正在看的那本，往下滚一次才碰到豆瓣的两组
+  function allBooks() {
+    return S.manual.concat(S.lists.doulist.books, S.lists.wish.books);
+  }
 
   function findBook(id) {
     var list = allBooks();
@@ -391,10 +422,14 @@
 
   function applyEdition(book, e) {
     if (!book || !e) return;
-    if (e.title) book.title = e.title;
-    if (e.author) book.author = e.author;
-    if (e.publisher) book.publisher = e.publisher;
-    if (e.year) book.year = e.year;
+    // 上图记录的题名是「正题名 = 并列题名」，作者是编目格式（中英文名各一遍）。整段套上去
+    // 会把豆瓣的短书名换成长题名——只补空缺：书名还只是 ISBN 或为空时才用上图正式题名
+    var titleIsCode = !book.title || book.title === book.isbn ||
+      /^(97[89])?\d{9}[\dXx]$/.test(compactIsbn(book.title));
+    if (e.title && titleIsCode) book.title = e.title;
+    if (e.author && !book.author) book.author = e.author;
+    if (e.publisher && !book.publisher) book.publisher = e.publisher;
+    if (e.year && !book.year) book.year = e.year;
     if (e.isbn) book.isbn = compactIsbn(e.isbn);
     if (book.adhoc) saveManual();
   }
@@ -702,6 +737,8 @@
           // code 是服务端给机读错误码（outOfShanghai / needKey），文案照旧走 message
           var e = new Error(j.error || ('HTTP ' + r.status));
           e.code = j.code || '';
+          // 豆瓣反爬冷却：页面要按秒数决定是否还显示「重试 / 继续加载」
+          e.blockedFor = j.blockedFor || 0;
           throw e;
         }
         return j;
@@ -731,7 +768,7 @@
   // 正常本机运行时行为完全不变。
 
   var LS_KEYS = ['shlib.spot', 'shlib.map', 'shlib.aside', 'shlib.theme', 'shlib.hist',
-    'shlib.covtips', 'shlib.addrs', 'shlib.shelf'];
+    'shlib.covtips', 'shlib.addrs', 'shlib.shelf', 'shlib.groups'];
 
   function lsGet(k) {
     if (S.nostore) return null;
@@ -1027,45 +1064,77 @@
     if (MAP && MAP.resize) { try { MAP.resize(); } catch (e) {} }
   }
 
-  function loadDoulist(refresh) {
-    S.doubanLoading = true;
-    S.doubanErr = '';
+  // 一次只抓一个来源的一批。kind='doulist' | 'wish'，两边各记各的进度和错误，
+  // 一个被拦截不会把另一个的状态也改掉
+  function loadList(kind, refresh, more) {
+    var st = S.lists[kind];
+    if (!st) return Promise.resolve();
+    var noun = kind === 'wish' ? '想读' : '豆列';
+    if (more) {
+      st.more = true;
+    } else {
+      st.loading = true;
+      st.err = '';
+      st.warn = '';
+    }
     renderBooks();
-    apiGet('/api/doulist' + (refresh ? '?refresh=1' : '')).then(function (j) {
-      S.books = j.books || [];
-      S.doulistName = j.name || '';
-      S.doubanLoading = false;
-      // 没配书单不是错误：豆瓣那组里给一句能直接照做的话
-      S.doubanEmpty = !!j.empty || !S.books.length;
-      renderBooks();
-      // 版本检查在书目稳定之后跑：刚打开页面、刚换完书单都算
-      checkShelfVersions();
-      // 当前选中的书还在架上（手动加的、或这份书单里还有它）就留着；
-      // 否则挑第一本。刷新书单不应该把正在看的那本冲掉
-      if (!findBook(S.activeId)) {
-        var first = allBooks()[0];
-        S.activeId = null;
-        if (first) selectBook(first.id);
-        else renderResultShell();
-      } else if (!S.results[S.activeId]) {
-        // 这份书单换了之后旧结果可能对不上，当前这本重新走一遍查询
-        selectBook(S.activeId);
-      }
+    var qs = [];
+    if (kind === 'wish') qs.push('source=wish');
+    if (more) qs.push('more=1');
+    else if (refresh) qs.push('refresh=1');
+    // 一批只有一页，但豆瓣偶尔回得很慢：给足 60 秒，默认 15 秒会误杀
+    return apiGet('/api/doulist' + (qs.length ? '?' + qs.join('&') : ''), 60000).then(function (j) {
+      st.books = j.books || [];
+      st.name = j.name || '';
+      st.loading = false;
+      st.more = false;
+      st.err = '';
+      // 「没配地址」和「列表是空的」不是一回事：只有后端说 empty 才算没配
+      st.empty = j.empty === true;
+      st.complete = j.complete !== false;
+      st.truncated = !!j.truncated;
+      st.blockedFor = j.blockedFor || 0;
+      st.warn = st.blockedFor > 0
+        ? '豆瓣暂时限制了访问，约 ' +
+          Math.max(1, Math.ceil(st.blockedFor / 60)) +
+          ' 分钟后可再试。下面是上次抓到的' + noun + '。'
+        : '';
     }).catch(function (e) {
-      S.doubanLoading = false;
-      S.doubanErr = e.message || '读取失败';
+      st.loading = false;
+      st.more = false;
+      st.blockedFor = e.blockedFor || 0;
+      if (more && st.books.length) {
+        // 继续加载失败：已经载入的书不动，只说这一批没拿到
+        st.err = '';
+        st.warn = (e.message || '读取失败') +
+          ' 已载入的 ' + st.books.length + ' 本不受影响。';
+      } else {
+        st.err = e.message || '读取失败';
+        st.warn = '';
+      }
+      toast('豆瓣' + noun + '读取失败：' + e.message, 'err');
+    }).then(function () {
       renderBooks();
+      // 版本检查在书目稳定之后跑：刚打开页面、刚换完地址、刚加载下一批都算
       checkShelfVersions();
+      // 当前选中的书还在架上（手动加的、或任一份列表里还有它）就留着；
+      // 否则挑第一本。刷新列表不应该把正在看的那本冲掉
       if (!findBook(S.activeId)) {
         var first = allBooks()[0];
         S.activeId = null;
         if (first) selectBook(first.id);
         else renderResultShell();
       } else if (!S.results[S.activeId]) {
+        // 列表换了之后旧结果可能对不上，当前这本重新走一遍查询
         selectBook(S.activeId);
       }
-      toast('豆瓣书单读取失败：' + e.message, 'err');
     });
+  }
+
+  // 豆列和想读同时抓：互不等待，各自先到先画。
+  // 不传 refresh 时两边都会用缓存（后端按各自的地址判断），不会额外打豆瓣
+  function loadLists(refresh) {
+    return Promise.all([loadList('doulist', refresh), loadList('wish', refresh)]);
   }
 
   // 书架状态全部画在封面上，不落行内文字：allout=印章「都已借出」、inhouse=印章「仅馆内」、
@@ -1078,6 +1147,11 @@
     if (S.busy[b.id]) return 'busy';
     if (!r) return '';
     if (r.meta.noRecord) return 'norecord';
+    // 没有 ISBN 的书先在上图书目里找同名版本，这一步的结果不是馆藏状态：
+    // 一个版本都没有 = 上图没有这一版，跟按 ISBN 查不到一样盖「无此版本」；
+    // 多个版本等用户选 = 还没查馆藏，什么都不盖（盖「都已借出」是凭空报账）
+    if (r.meta.noEdition) return 'norecord';
+    if (r.meta.needVersion) return '';
     // 查询失败（接口没响应）不是「都已借出」：不挂灰罩，别把两种状态画成一个样
     if (r.meta.fetchErr) return '';
     // 有可借家数时什么都不显示（数字在结果区筛选条上）
@@ -1124,6 +1198,18 @@
       '<span class="spacer"></span>' + (acts || '') + '</div>';
   }
 
+  // 组标题行尾的箭头：收起只影响这一组，别组照常。
+  // 用 Lucide 手风琴的语义（ChevronDown 的展开/收起态）：展开时朝上 = 把内容折上去，
+  // 收起时朝下 = 内容往下展开；方向就是这一组真实的上下收放，不用横向箭头
+  function foldBtn(kind, name) {
+    var open = !S.folded[kind];
+    var label = (open ? '收起' : '展开') + name;
+    return '<button type="button" class="ghost icon-btn sgrp-fold" data-shelf-act="fold" ' +
+      'data-field="' + kind + '" aria-expanded="' + (open ? 'true' : 'false') + '" ' +
+      'title="' + label + '" aria-label="' + label + '">' +
+      icon(open ? 'chevron-up' : 'chevron-down') + '</button>';
+  }
+
   // 一组书的行：封面 + 书名 / 作者·出版社 年份 / ISBN。
   // 手动添加和豆瓣书单共用这一套——两组的书、能力、状态都该长得一样，
   // 只有「移除」是手动添加独有的行内动作。
@@ -1149,55 +1235,110 @@
     var box = $('bookList');
     if (!box) return;
     var manual = S.manual;
-    var douban = S.books;
+    var dou = S.lists.doulist;
+    var wish = S.lists.wish;
 
-    // 两组都空、豆瓣也已经读完：给一块能直接动手的空态，而不是两排光秃秃的组标题
-    if (!manual.length && !douban.length && !S.doubanLoading && !S.doubanErr && S.doubanEmpty) {
+    // 同一本书两边都有时只归豆列：想读组不再画一遍，末尾说明还有几本是重复的。
+    // 按条目 id 比，不看书名——想读和豆列里的同名书可能是不同版本
+    var douIds = {};
+    dou.books.forEach(function (b) { douIds[b.id] = 1; });
+    var wishBooks = wish.books.filter(function (b) { return !douIds[b.id]; });
+    var wishDup = wish.books.length - wishBooks.length;
+
+    var anyLoading = dou.loading || wish.loading;
+    var anyErr = dou.err || wish.err;
+    // 两组都空、两个地址也都没配：给一块能直接动手的空态，而不是几排光秃秃的组标题
+    if (!manual.length && !dou.books.length && !wish.books.length && !anyLoading &&
+        !anyErr && dou.empty && wish.empty) {
       box.innerHTML = '<div class="shelf-empty">' +
         '<span class="se-ico">' + icon('library') + '</span>' +
         '<p>书架还是空的</p>' +
         '<div class="se-acts">' +
         '<button type="button" class="primary sm" data-shelf-act="add">手动加书</button>' +
-        '<button type="button" class="sm" data-shelf-act="edit">设置豆瓣书单地址</button>' +
+        '<button type="button" class="sm" data-shelf-act="edit">设置豆瓣地址</button>' +
         '</div></div>';
       return;
     }
 
     var html = '';
-    // 手动添加在上：刚加的书不用穿过整份豆瓣书单才找得到
+    // 手动添加在上：刚加的书不用穿过整份豆瓣列表才找得到
     if (manual.length) {
-      html += shelfHeadHTML(icon('book-plus'), '手动添加', manual.length, '');
-      html += manual.map(bookRowHTML).join('');
+      html += shelfHeadHTML(icon('book-plus'), '手动添加', manual.length, foldBtn('manual', '手动添加'));
+      if (!S.folded.manual) html += manual.map(bookRowHTML).join('');
     }
 
-    // 豆瓣书单在下：换书单是这一组自己的事，收成一枚图标放在组标题右边
-    html += shelfHeadHTML(
-      '<img class="dblogo" src="douban-favicon.png" alt="" width="16" height="16">',
-      '豆瓣书单', douban.length,
-      '<button type="button" class="ghost icon-btn" data-shelf-act="edit" ' +
-      'title="修改豆瓣书单地址" aria-label="修改豆瓣书单地址">' + icon('square-pen') + '</button>');
+    // 豆瓣两组在下：地址没配、也没有任何内容时不画这一组，别让书架挂两排空标题。
+    // 配过地址（empty=false）但列表真的是空的，仍然画出来——那是在说「列表是空的」，
+    // 跟「还没设置」是两件事
+    function listGroup(kind, st, books, dupNote) {
+      if (!books.length && !st.loading && !st.err && !st.warn && st.empty) return;
+      var noun = kind === 'wish' ? '想读' : '豆列';
+      html += shelfHeadHTML(
+        '<img class="dblogo" src="douban-favicon.png" alt="" width="16" height="16">',
+        '豆瓣' + noun, books.length,
+        '<button type="button" class="ghost icon-btn" data-shelf-act="edit" data-field="' + kind + '" ' +
+        'title="修改豆瓣' + noun + '地址" aria-label="修改豆瓣' + noun + '地址">' +
+        icon('square-pen') + '</button>' + foldBtn(kind, '豆瓣' + noun));
 
-    if (S.doubanLoading) {
-      html += '<div class="shelf-note"><span class="spin"></span> 正在读豆瓣书单…</div>';
-    } else if (S.doubanErr) {
-      // 读取失败时旧书单还在：提示挂在上面，列表不撤，别让人以为书全丢了
-      html += '<div class="shelf-note err">' + esc(S.doubanErr) +
-        ' <button type="button" class="linkish" data-shelf-act="refresh">重试</button></div>';
-    } else if (S.doubanEmpty) {
-      html += '<div class="shelf-note">尚未设置豆瓣书单。' +
-        '<button type="button" class="linkish" data-shelf-act="edit">去设置</button></div>';
+      // 收起后组内所有内容都不画：书、加载/错误提示、继续加载、重复说明
+      if (S.folded[kind]) return;
+
+      if (st.loading) {
+        html += '<div class="shelf-note"><span class="spin"></span> 正在读豆瓣' + noun + '…</div>';
+      } else if (st.err) {
+        // 读取失败时旧列表还在：提示挂在上面，列表不撤，别让人以为书全丢了
+        html += '<div class="shelf-note err">' + esc(st.err) +
+          ' <button type="button" class="linkish" data-shelf-act="refresh" data-field="' + kind +
+          '">重试</button></div>';
+      } else if (st.warn) {
+        // 豆瓣拦截但旧列表还在：书继续用，只把「为什么不是最新的」说清楚
+        html += '<div class="shelf-note err">' + esc(st.warn) + '</div>';
+      } else if (st.empty) {
+        html += '<div class="shelf-note">尚未设置豆瓣' + noun + '。' +
+          '<button type="button" class="linkish" data-shelf-act="edit" data-field="' + kind +
+          '">去设置</button></div>';
+      }
+      if (books.length) {
+        html += books.map(bookRowHTML).join('');
+        // 长列表分批抓：抓完一批先显示，下一批由用户点「继续加载」触发；
+        // 冷却中不给按钮，点下去也只会拿回同一句提示
+        if (st.more) {
+          html += '<div class="shelf-more"><span class="spin"></span> 正在加载更多…</div>';
+        } else if (st.truncated) {
+          html += '<div class="shelf-more">列表太长，只载入了前 ' + books.length + ' 本。</div>';
+        } else if (!st.complete && !st.blockedFor) {
+          html += '<div class="shelf-more">已载入 ' + books.length + ' 本。' +
+            '<button type="button" class="linkish" data-shelf-act="more" data-field="' + kind +
+            '">继续加载</button></div>';
+        }
+      }
+      if (dupNote) html += '<div class="shelf-more">' + dupNote + '</div>';
     }
-    if (douban.length) {
-      html += douban.map(bookRowHTML).join('');
-    }
+
+    listGroup('doulist', dou, dou.books, '');
+    // 想读里跟豆列重复的那几本没有单独画出来，说一声它们去哪了，免得以为丢了
+    listGroup('wish', wish, wishBooks,
+      wishDup ? '另有 ' + wishDup + ' 本已在豆列里，不重复列出。' : '');
     box.innerHTML = html;
 
     // 封面印章第一次见的人看不懂，书架非空时提示一次、之后不再烦。
     // 逐态文案在 .cov 的 title 里，这条只负责告诉用户「有这么几种状态、悬停能看」
-    if ((manual.length || douban.length) && !lsGet('shlib.covtips')) {
+    if ((manual.length || dou.books.length || wish.books.length) && !lsGet('shlib.covtips')) {
       lsSet('shlib.covtips', '1');
       toast('封面印章：「都已借出」「仅馆内」「无此版本」是查询结果；查过而没有印章，表示有可借复本');
     }
+  }
+
+  // 收起 / 展开一组：renderBooks 会换掉整块 bookList。键盘操作要把焦点还给同一组的箭头，
+  // 否则焦点掉回页面开头；鼠标点的不还，否则刚点完就多一圈键盘焦点框
+  function toggleFold(kind, restoreFocus) {
+    if (!S.folded.hasOwnProperty(kind)) return;
+    S.folded[kind] = !S.folded[kind];
+    lsSet('shlib.groups', JSON.stringify(S.folded));
+    renderBooks();
+    if (!restoreFocus) return;
+    var btn = $('bookList').querySelector('[data-shelf-act="fold"][data-field="' + kind + '"]');
+    if (btn) btn.focus({ preventScroll: true });
   }
 
   // ---------------------------------------------------------------- 搜索（推荐 / 匹配 / 记录）
@@ -3567,13 +3708,90 @@
 
   var settingsReturnFocus = null;
 
+  // 项目主页和发布页都以服务端给的地址为准；只接受 github.com 的 https 地址，
+  // 不把接口里的任意字符串直接塞进 href
+  function projectUrl() {
+    return (S.cfg && S.cfg.homepage) || 'https://github.com/Giant-Apple/shlib-finder';
+  }
+
+  function releaseUrl(u) {
+    return /^https:\/\/([a-z0-9-]+\.)*github\.com\//i.test(u || '')
+      ? u : projectUrl() + '/releases';
+  }
+
+  // 检查结果写在按钮上：已是最新 / 新版本 x.y.z / 检查失败。
+  // 用户选的是「结果并进按钮」——版本行只放版本号，不再单起一行写结论。
+  // 有新版本时按钮必须说出「有新版」这件事实（只写「打开发布页」是个动作，
+  // 用户看不出查到了什么），点击才是打开 GitHub 发布页。
+  function paintUpdate(res) {
+    var btn = $('checkUpdate');
+    if (!btn) return;
+    S.update = res || null;
+    // 局域网只读：服务端不收写请求，这里也别把按钮点亮
+    btn.disabled = !!(S.cfg && S.cfg.readOnly);
+    btn.classList.remove('has-update');
+    if (!res || res.never) {
+      btn.textContent = '检查更新';
+      btn.title = '检查 GitHub 上有没有新版本';
+      return;
+    }
+    var when = res.checkedAt ? '上次检查：' + res.checkedAt + '；' : '';
+    if (res.failed) {
+      btn.textContent = '检查失败';
+      btn.title = res.err ? '检查更新失败：' + res.err + '；点击重试' : when + '没连上 GitHub，点击重试';
+    } else if (res.newer) {
+      // 版本号走 textContent（来自接口的字符串不拼进 HTML），箭头是固定的图标串
+      btn.classList.add('has-update');
+      btn.textContent = '新版本 ' + (res.latest || '');
+      btn.insertAdjacentHTML('beforeend', icon('external-link', 'ic-ext'));
+      btn.title = when + '当前 ' + res.current + '，新版本 ' + res.latest + '；点击打开发布页';
+    } else {
+      btn.textContent = '已是最新';
+      btn.title = when + '已是最新版本 ' + res.current + '，点击重新检查';
+    }
+  }
+
+  // 打开设置时只读服务端缓存，不联网：检查更新只在用户点按钮时发生
+  function loadUpdatePeek() {
+    apiGet('/api/update-check').then(paintUpdate).catch(function () {
+      paintUpdate(null);
+    });
+  }
+
+  function checkUpdate() {
+    var btn = $('checkUpdate');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '检查中…';
+    btn.title = '';
+    apiPost('/api/update-check', {}).then(paintUpdate).catch(function (e) {
+      paintUpdate({
+        failed: true,
+        err: e.message || '请求没发出去',
+        current: (S.cfg && S.cfg.version) || ''
+      });
+      toast('检查更新失败：' + (e.message || ''), 'err');
+    }).then(function () {
+      applyReadOnly(S.cfg);
+    });
+  }
+
+  // 按钮只有一个：有新版本时带用户去发布页，其余时候都是「再查一次」
+  function onUpdateClick() {
+    if (S.update && S.update.newer && !S.update.failed) {
+      window.open(releaseUrl(S.update.url), '_blank', 'noopener');
+      return;
+    }
+    checkUpdate();
+  }
+
   // 从其他设备（局域网 IP）打开时服务端只给只读配置（readOnly=true）：
   // 把会写盘的控件全部禁用，别让人填完再吃一个 403。地图默认展开只是本机偏好，照常可点。
   function applyReadOnly(cfg) {
     var ro = !!(cfg && cfg.readOnly);
     var note = $('setRo');
     if (note) note.hidden = !ro;
-    ['setDoulist', 'setKey', 'setMapKey', 'setMapSec'].forEach(function (id) {
+    ['setDoulist', 'setWish', 'setKey', 'setMapKey', 'setMapSec'].forEach(function (id) {
       var el = $(id);
       if (el) el.disabled = ro;
     });
@@ -3587,16 +3805,20 @@
     if (test) test.disabled = ro;
     var lan = $('lanToggle');
     if (lan) lan.disabled = ro;
+    // 检查更新是写操作（POST，服务端只收本机请求），只读时不给点
+    var cu = $('checkUpdate');
+    if (cu) cu.disabled = ro;
     if (ro) closeProviderMenu(false);
   }
 
-  // focus 传 'doulist' 时，打开面板后把光标落到书单地址输入框并选中整条地址
-  // （「改地址」就在豆瓣书单的组标题右边，用户点它是奔着换地址来的，不该再让他在面板里找）
+  // focus 传 'doulist' / 'wish' 时，打开面板后把光标落到对应地址输入框并选中整条地址
+  // （「改地址」就在对应分组的组标题右边，用户点它是奔着换地址来的）
   function openSettings(focus) {
     var cfg = S.cfg || {};
     settingsReturnFocus = document.activeElement;
     applyReadOnly(cfg);
     $('setDoulist').value = cfg.doulist_url || '';
+    $('setWish').value = cfg.wish_url || '';
     syncProviderUI((cfg.geocode && cfg.geocode.provider) || 'amap');
     closeProviderMenu(false);
     $('setKey').value = '';
@@ -3623,6 +3845,11 @@
       rb.hidden = !!cfg.readOnly ||
         ['127.0.0.1', 'localhost', '[::1]', '::1'].indexOf(location.hostname) < 0;
     }
+    // GitHub 项目主页：地址由服务端给，老服务端没有这个键就用常量兜底
+    var home = $('homeLink');
+    if (home) home.href = projectUrl();
+    // 更新状态先显示上次检查的结果（缓存），不发请求
+    loadUpdatePeek();
     // 同步外观开关的高亮（不写 localStorage）
     applyTheme(document.documentElement.getAttribute('data-theme') || 'light', false);
     // 地图默认展不展开：没存过就按启动时的判定显示（宽屏开、窄屏关），
@@ -3632,8 +3859,8 @@
     $('settings').classList.add('show');
     $('settings').setAttribute('aria-hidden', 'false');
     loadLanInfo();
-    if (focus === 'doulist' && !cfg.readOnly) {
-      var inp = $('setDoulist');
+    if ((focus === 'doulist' || focus === 'wish') && !cfg.readOnly) {
+      var inp = focus === 'wish' ? $('setWish') : $('setDoulist');
       try { inp.focus(); inp.select(); } catch (e) {}
     } else {
       // 初始焦点落在关闭按钮：读屏用户一进来先知道「这是个能退出的对话框」
@@ -3820,7 +4047,11 @@
       toast('从其他设备打开时这里是只读的：改设置请回到运行服务的那台电脑', 'err');
       return;
     }
-    var body = { doulist_url: $('setDoulist').value.trim() };
+    var body = {
+      doulist_url: $('setDoulist').value.trim(),
+      // 想读地址带着豆瓣账号 ID，同样只存本机；两个地址可以只填一个
+      wish_url: $('setWish').value.trim()
+    };
     // 笔记路径不在这里提交：它只在 config.json 里，面板上干脆不露面
     // Key 留空 = 不改 Key，但 provider 仍然要提交——否则只换高德/腾讯会静默不生效
     var key = $('setKey').value.trim();
@@ -3861,7 +4092,7 @@
       }
       if (key) loadVenues();
       if (mkey || msec) { resetAmap(); if (S.activeId) renderResult(); }
-      loadDoulist(false);
+      loadLists(false);
     }).catch(function (e) { toast('保存失败：' + e.message, 'err'); });
   }
 
@@ -3892,6 +4123,13 @@
         if (mv === null && window.innerWidth <= NARROW_W) S.mapOn = false;
         // 书单收起的记忆要先恢复（不写回 localStorage）
         if (lsGet('shlib.aside') === '0') setAside(true, false);
+        // 三个书架的收起状态：只认这三个来源，坏数据就当全部展开
+        try {
+          var folded = JSON.parse(lsGet('shlib.groups') || '{}');
+          ['manual', 'doulist', 'wish'].forEach(function (k) {
+            if (folded && folded[k]) S.folded[k] = true;
+          });
+        } catch (e) {}
       }
     } catch (e) {}
     // 手动加的书先读回来：豆瓣书单还要等接口，但书架不该跟着空一截
@@ -3914,7 +4152,7 @@
       if (!S.cfg.geocode.hasKey) {
         toast('还没配 Web 服务 Key：距离和骑行用不了，在右上角设置里填', 'err');
       }
-      loadDoulist(false);
+      loadLists(false);
       if (!S.spot) tryGeo();
     }).catch(function (e) {
       toast('本地服务没响应：' + e.message, 'err');
@@ -4062,9 +4300,17 @@
       var act = e.target.closest('[data-shelf-act]');
       if (act) {
         var a = act.getAttribute('data-shelf-act');
+        // 收起按钮的 data-field 是 manual/doulist/wish，别走下面那套「非 wish 即豆列」。
+        // e.detail === 0 是键盘/读屏触发的 click，重画后要把焦点还回原处
+        if (a === 'fold') {
+          toggleFold(act.getAttribute('data-field'), e.detail === 0);
+          return;
+        }
+        var field = act.getAttribute('data-field') === 'wish' ? 'wish' : 'doulist';
         if (a === 'add') openAdd();
-        else if (a === 'edit') openSettings('doulist');
-        else if (a === 'refresh') loadDoulist(true);
+        else if (a === 'edit') openSettings(field);
+        else if (a === 'refresh') loadList(field, true);
+        else if (a === 'more') loadList(field, false, true);
         return;
       }
       var el = e.target.closest('.book');
@@ -4149,6 +4395,7 @@
     $('settings').addEventListener('keydown', function (e) { trapTab(this, e); });
     $('keyTest').addEventListener('click', testKey);
     $('restartSrv').addEventListener('click', restartServer);
+    $('checkUpdate').addEventListener('click', onUpdateClick);
     // 「从其他设备访问」开关：只翻状态，保存时才写配置（见 saveSettings）。
     // 服务收到保存就会换监听地址，所以这里只说「保存后生效」，不再问要不要重启
     $('lanToggle').addEventListener('click', function () {

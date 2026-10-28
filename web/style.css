@@ -683,6 +683,9 @@ main.aside-min #aside { padding-top: 0; }
 
 .booklist {
   overflow-y: auto;
+  /* 分组展开/收起会让整列在「要滚动」和「不用滚动」之间切换：滚动条一出现就吃掉十几像素，
+     书行跟着左跳。常驻一条槽位，有没有书滚动，行宽都不变 */
+  scrollbar-gutter: stable;
   flex: 1;
   min-height: 0;
   padding: 8px;
@@ -735,6 +738,19 @@ main.aside-min #aside { padding-top: 0; }
   line-height: 1.5;
 }
 .shelf-note.err { color: var(--warn); background: var(--warn-soft); }
+/* 长书单的分批footer：一行小字 + 一枚文字链，不再是灰色提示块 */
+.shelf-more {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 4px 8px 8px;
+  padding: 0 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.shelf-more .spin { width: 12px; height: 12px; border-width: 2px; }
 /* 两份书单都空时的居中空态：给两个能直接动手的入口 */
 .shelf-empty {
   display: flex;
@@ -1220,10 +1236,21 @@ html[data-theme="dark"] .res-head .extlink:hover img { background: #eef2f5; }
 .db-vers-rows.pick { margin-top: 12px; gap: 6px; }
 .db-vers-rows.pick .db-ver { height: auto; min-height: 36px; padding: 6px 10px; }
 .linkish {
-  padding: 0; border: 0; background: none;
-  color: var(--brand); font: inherit; cursor: pointer;
-  text-decoration: underline; text-underline-offset: 2px;
+  /* 文字链不是胶囊按钮：全局 button 的 36px 高 + 999 圆角会让「去设置」hover 时
+     浮出一个圆；这里把它清回文字尺寸和方角，hover 也不要灰底 */
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--brand);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
+.linkish:hover:not(:disabled) { background: none; color: color-mix(in srgb, var(--brand) 80%, var(--ink)); }
+.linkish:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; box-shadow: none; }
 
 @media (max-width: 600px) {
   .dbv-main { flex-wrap: wrap; gap: 0 8px; }
@@ -2297,11 +2324,36 @@ html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0
   padding-top: 8px;
 }
 
-/* 版本号 + 重启服务：同一行，按钮贴右沿。局域网打开时按钮由 JS 隐藏，
-   因为服务端只接受回环来源的重启请求 */
-.ver-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.ver-row .ver { min-width: 0; }
-.ver-row button { flex: none; margin-top: -2px; height: var(--ctl-sm); padding: 0 12px; font-size: 13px; }
+/* 版本号 + 右侧按钮组：检查更新常驻，重启服务只在回环地址上出现（服务端也只接受
+   回环来源的重启请求）。按钮贴右沿，版本号放得下就不换行 */
+.about-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* 左侧：GitHub 标记在前，版本号在后；标记的点击区 32 见方，图标本身只占 16 */
+.about-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.about-row .ver { min-width: 0; }
+.about-acts { display: flex; flex: none; gap: 6px; }
+.about-acts button { height: var(--ctl-sm); padding: 0 12px; font-size: 13px; }
+/* GitHub 入口：图标按钮，和旁边两颗文字按钮同高；只放品牌标记 */
+.about-id .about-gh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ctl-sm);
+  height: var(--ctl-sm);
+  border-radius: 9px;
+  color: var(--ink-2);
+}
+.about-id .about-gh:hover { color: var(--ink); background: var(--hover); }
+.about-id .about-gh .ic { width: 16px; height: 16px; }
+/* 查到新版本：按钮自己说出结论（「新版本 0.2.0」），品牌色 + 外链箭头说明点了会开页面。
+   旁边的「重启服务」和 GitHub 仍是中性样式，不跟着一起亮 */
+.about-acts button.has-update {
+  gap: 4px;
+  color: var(--brand);
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+}
+.about-acts button.has-update:hover:not(:disabled) { background: var(--brand-line); }
+.about-acts button.has-update .ic { width: 12px; height: 12px; }
 
 /* 版本号：放在「关于」分组里，正常可读的字号 */
 .settings .ver {

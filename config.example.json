@@ -1,5 +1,6 @@
 {
   "doulist_url": "https://www.douban.com/doulist/YOUR_DOULIST_ID/",
+  "wish_url": "https://book.douban.com/people/YOUR_DOUBAN_ID/wish",
   "lan": false,
   "geocode": {
     "provider": "amap",

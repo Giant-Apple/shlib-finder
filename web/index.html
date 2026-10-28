@@ -127,12 +127,17 @@
       </div>
     </div>
 
-    <!-- 2 豆瓣书单地址 -->
-    <div class="grp">豆瓣书单地址</div>
+    <!-- 2 豆瓣地址：豆列和想读可以只填一个，也可以都填 -->
+    <div class="grp">豆瓣地址</div>
 
     <div class="field">
-      <label for="setDoulist">书单页网址</label>
+      <label for="setDoulist">豆列网址</label>
       <input id="setDoulist" placeholder="https://www.douban.com/doulist/xxxx/">
+    </div>
+
+    <div class="field last">
+      <label for="setWish">想读网址</label>
+      <input id="setWish" placeholder="https://book.douban.com/people/你的ID/wish">
     </div>
 
     <!-- 3 地图 API Key -->
@@ -205,10 +210,21 @@
     <!-- 5 关于 -->
     <div class="grp">关于</div>
 
-    <div class="ver-row">
-      <div class="ver" id="setVer">上图馆藏查询 v—</div>
-      <button class="sm" type="button" id="restartSrv" hidden
-              title="重启本地服务，让 server.py / version.json 的改动生效">重启服务</button>
+    <div class="about-row">
+      <div class="about-id">
+        <a class="icon-btn about-gh" id="homeLink" href="https://github.com/Giant-Apple/shlib-finder"
+           target="_blank" rel="noopener noreferrer"
+           title="GitHub 项目主页" aria-label="GitHub 项目主页"><i data-icon="github"></i></a>
+        <div class="ver" id="setVer">上图馆藏查询 v—</div>
+      </div>
+      <div class="about-acts">
+        <!-- 检查更新只查版本号，不下载、不安装；检测本身只在点这一下时发生。
+             结果直接写在按钮上（已是最新 / 新版本 x.y.z / 检查失败），不另占一行；
+             查到新版时按钮报出号数并高亮，点击打开 GitHub 发布页 -->
+        <button class="sm" type="button" id="checkUpdate">检查更新</button>
+        <button class="sm" type="button" id="restartSrv" hidden
+                title="重启本地服务，让 server.py / version.json 的改动生效">重启服务</button>
+      </div>
     </div>
 
     <div class="foot">

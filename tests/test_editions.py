@@ -216,7 +216,8 @@ DOULIST_ITEM = '''
     出版年: 2024-9<br>
     页数: 456<br>
     定价: 98.00元<br>
-    装帧: 平装
+    装帧: 平装<br>
+    ISBN: 978-7-5598-8794-8
   </div>
 </div>
 '''
@@ -235,6 +236,8 @@ class DoulistTest(unittest.TestCase):
         # 豆瓣写的是「2024-9」这种年-月：只留 4 位年份，它紧跟出版社，
         # 留着「-9」会被读成具体出版日期（2026-10-26 用户定）
         self.assertEqual(b['year'], '2024')
+        # 豆列摘要里现成的 ISBN：去掉连字符，不用再逐本抓详情页
+        self.assertEqual(b['isbn'], '9787559887948')
         self.assertTrue(b['cover'].startswith('https://img3.doubanio.com/'))
 
     def test_empty(self):

@@ -84,6 +84,28 @@ EDITIONS_MAX_RETURN = 12    # 去重后最多返回多少个可查版本
 # 豆瓣条目详情（其他版本 / 喜欢这本书的人也喜欢 / 高赞短评）已随「豆瓣上的书」模块一起撤掉。
 # 这里只留抓条目页取 ISBN 所需的最小配置（书单补 ISBN 仍走豆瓣）。
 DOUBAN_MIN_GAP = 0.6
+# 书单分页一次抓多少本：25 本 = 豆瓣书单正好一页，一批只发一个请求，
+# 跟普通翻一页没区别；100 本（4 页连发）会落到豆瓣「连续 3-5 页就 403」的区间。
+# 再往后要用户点「继续加载」才抓下一批。
+DOULIST_BATCH = 25
+# 豆瓣「想读」默认网格一页 15 本：一批只发一个请求，翻页跟随页面上的 rel="next"，
+# 不写死步长——豆瓣换列表模式时也不用跟着改。
+WISH_BATCH = 15
+# 防失控硬上限：正常豆列远到不了；到了就明确告诉用户「只载入了前 N 本」，不再静默截断
+DOULIST_MAX_BOOKS = 2000
+# 被豆瓣拦截后的冷却时间：期间不再打豆瓣，页面上的重试只会拿回同一句提示
+DOUBAN_BLOCK_COOL = 10 * 60
+
+# 公开仓地址只在这里写一次：页面上的「GitHub 项目主页」和更新检测都从它来
+REPO = 'Giant-Apple/shlib-finder'
+PROJECT_URL = 'https://github.com/' + REPO
+UPDATE_API = 'https://api.github.com/repos/%s/releases/latest' % REPO
+# GitHub API 在国内时通时不通；两个静态 version.json 作为降级。
+# 都拿不到就如实说「查不到」，不能把失败当成「已是最新」。
+UPDATE_FALLBACKS = (
+    'https://raw.githubusercontent.com/%s/main/version.json' % REPO,
+    'https://cdn.jsdelivr.net/gh/%s@main/version.json' % REPO,
+)
 
 
 def holdings_cache_sweep(max_age=None, max_size=None):
@@ -168,6 +190,9 @@ DEFAULT_CONFIG = {
     # 不写任何具体书单：这是「某个人的豆列」，不该成为默认值跟着出厂。
     # 留空时页面显示一句「去设置里填书单地址」，用户自己贴自己的。
     'doulist_url': '',
+    # 豆瓣个人「想读」列表：和豆列同时可用，也可以只填其中一个。
+    # 地址里带豆瓣账号 ID，同样只留在本机。
+    'wish_url': '',
     # 局域网访问：默认关闭，只监听 127.0.0.1。开启后监听 0.0.0.0，
     # 同一 WiFi 下的手机可以只读访问（见 api_config 的只读规则）。
     # 绑定在启动时决定，所以切换开关后需要重启服务。
@@ -199,9 +224,24 @@ GEOCODE_LOCK = threading.RLock()
 EDITIONS_LOCK = threading.RLock()
 
 # 豆瓣请求节流：两次请求的发起时间至少隔 DOUBAN_MIN_GAP 秒。
-# 详情页会连着抓条目、短评和几个版本，不隔着点很容易触发反爬。
+# 书单翻页和补 ISBN 都走这一道，连续请求很容易触发反爬。
 DOUBAN_GAP_LOCK = threading.Lock()
 DOUBAN_LAST_AT = 0.0
+
+# 豆瓣反爬冷却：识别到拦截页后到某个时刻为止不再发请求，避免用户连点「重试」
+# 反而把封禁时间越拖越长。状态只在内存里，重启服务即清空。
+DOUBAN_BLOCK_LOCK = threading.Lock()
+DOUBAN_BLOCKED_UNTIL = 0.0
+
+# 补 ISBN 的节奏锁：豆列和想读各跑一个后台线程，如果各睡各的，两个 1 秒/本
+# 叠起来就是 2 次/秒。把「取一本 + 歇一秒」整段放进同一把锁，两个来源合计
+# 仍然最多 1 次/秒，代价是两边轮流补、都慢一点。
+ISBN_PACE_LOCK = threading.Lock()
+
+# 更新检测：RUN 锁保证一次只打一个检测（手动连点不叠加），STATE 锁只护结果缓存。
+UPDATE_RUN_LOCK = threading.Lock()
+UPDATE_STATE_LOCK = threading.Lock()
+UPDATE_STATE = {'at': 0.0, 'result': None}
 
 
 def load_config():
@@ -267,7 +307,88 @@ def http_get(url, timeout=30, headers=None, data=None):
         return resp.read().decode('utf-8', 'ignore')
 
 
+# ---------------------------------------------------------------- 更新检测
+
+def parse_semver(v):
+    """'v1.2.3' / '1.2.3' → (1, 2, 3)；不合规返回 None。"""
+    m = re.fullmatch(r'\s*[vV]?(\d+)\.(\d+)\.(\d+)\s*', str(v or ''))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def _newer(latest, current):
+    a, b = parse_semver(latest), parse_semver(current)
+    return bool(a and b and a > b)
+
+
+def _latest_release():
+    """查最新版本，返回 (版本号, 发布页)。查不到返回 (None, None)——不能把失败当「已是最新」。
+
+    先问 GitHub Releases API；国内网络下它时通时不通，所以再用仓库里的
+    version.json 兜底（raw.githubusercontent.com 和 jsDelivr 各一个）。
+    这些都只是 GET 一个公开地址，不发任何本机信息。
+    """
+    try:
+        data = json.loads(http_get(UPDATE_API, timeout=10,
+                                   headers={'Accept': 'application/vnd.github+json'}))
+        tag = str(data.get('tag_name') or '').strip()
+        if parse_semver(tag):
+            url = str(data.get('html_url') or '').strip()
+            return tag.lstrip('vV'), url or (PROJECT_URL + '/releases')
+    except Exception:
+        pass
+    for u in UPDATE_FALLBACKS:
+        try:
+            ver = str(json.loads(http_get(u, timeout=8)).get('version') or '').strip()
+            if parse_semver(ver):
+                return ver, PROJECT_URL + '/releases'
+        except Exception:
+            continue
+    return None, None
+
+
+def update_peek():
+    """设置面板打开时读一眼缓存，不发请求——检查更新只在用户点按钮时发生。"""
+    with UPDATE_STATE_LOCK:
+        res = UPDATE_STATE.get('result')
+    out = dict(res) if res else {'latest': '', 'url': PROJECT_URL + '/releases',
+                                 'checkedAt': '', 'never': True}
+    out['current'] = VERSION
+    return out
+
+
+def update_check():
+    """用户点了「检查更新」：必须重新请求。成功才覆盖缓存，
+    失败不会把上一次查到的结果冲掉（下次打开设置还能看到那条）。"""
+    # 连点两下也只跑一次：第二下等第一下结束，拿同一份结果
+    with UPDATE_RUN_LOCK:
+        ver, url = _latest_release()
+        res = {
+            'current': VERSION,
+            'latest': ver or '',
+            'url': url or (PROJECT_URL + '/releases'),
+            'newer': _newer(ver, VERSION),
+            'failed': not ver,
+            'checkedAt': time.strftime('%Y-%m-%d %H:%M'),
+        }
+        if ver:
+            with UPDATE_STATE_LOCK:
+                UPDATE_STATE['at'] = time.time()
+                UPDATE_STATE['result'] = res
+        return dict(res)
+
+
 # ---------------------------------------------------------------- 豆瓣
+
+DOULIST_RE = re.compile(r'^https?://(?:www\.)?douban\.com/doulist/(\d+)', re.I)
+# 图书「想读」只认 book.douban.com；www.douban.com/people/<id>/wish 是影视「想看」，
+# 别把电影列表抓进来当书查。
+WISH_RE = re.compile(r'^https?://book\.douban\.com/people/([^/?#]+)/wish(?:[/?#]|$)', re.I)
+WISH_MOVIE_RE = re.compile(r'^https?://(?:www|movie)\.douban\.com/people/([^/?#]+)/wish', re.I)
+
+
+def list_kind_of(raw):
+    return 'wish' if WISH_RE.match((raw or '').strip()) else 'doulist'
+
 
 def doulist_url_of(raw):
     """支持整段 URL 或纯数字 id。"""
@@ -276,7 +397,24 @@ def doulist_url_of(raw):
         return ''
     if raw.isdigit():
         return 'https://www.douban.com/doulist/%s/' % raw
+    m = DOULIST_RE.match(raw)
+    if m:
+        return 'https://www.douban.com/doulist/%s/' % m.group(1)
     return raw
+
+
+def wish_url_of(raw):
+    """把想读地址收成规范形式：去掉 ?start= 之类的翻页参数，只留账号和 /wish。"""
+    raw = (raw or '').strip()
+    if not raw:
+        return ''
+    m = WISH_RE.match(raw)
+    if m:
+        return 'https://book.douban.com/people/%s/wish' % m.group(1)
+    if WISH_MOVIE_RE.match(raw):
+        raise ValueError('这是影视「想看」页；图书「想读」地址要形如 '
+                         'https://book.douban.com/people/你的ID/wish')
+    raise ValueError('想读地址要形如 https://book.douban.com/people/你的ID/wish')
 
 
 def _clean(s):
@@ -295,7 +433,11 @@ def only_year(v):
 def parse_doulist_page(html):
     """书单页里每条是 <div id=".." class="doulist-item">。"""
     books = []
-    for blk in re.split(r'<div id="\d+"\s+class="doulist-item"', html)[1:]:
+    # 属性顺序、空白都可能随豆瓣改版变；只咬住 id + doulist-item 两个特征，
+    # 少一个属性就整页解析成 0 本，长书单会在中途被当成「已经到底了」
+    for blk in re.split(
+            r'<div\s+(?:id="\d+"\s+class="doulist-item"|class="doulist-item"\s+id="\d+")',
+            html)[1:]:
         m = re.search(r'<div class="title">\s*<a[^>]*href="([^"]*subject/(\d+)/?)"[^>]*>([\s\S]*?)</a>', blk)
         if not m:
             continue
@@ -321,9 +463,102 @@ def parse_doulist_page(html):
             'author': info.get('作者', ''),
             'publisher': info.get('出版社', ''),
             'year': only_year(info.get('出版年', '')),
+            # 豆列摘要里本来就有 ISBN 行：能读到就别再逐本抓详情页（想读页没有这行）
+            'isbn': normalize_isbn(info.get('ISBN')),
+        })
+    return books
+
+
+def page_name(html):
+    """页面标题当列表名：豆列是「我的书单 - 豆瓣」，想读是「我想读的书(161)」。"""
+    m = re.search(r'<title>([\s\S]*?)</title>', html)
+    if not m:
+        return ''
+    name = _clean(m.group(1)).replace('豆瓣', '').strip(' |｜')
+    return re.sub(r'[（(]\d+[)）]\s*$', '', name).strip()
+
+
+def _split_pub(text):
+    """「作者 / 出版社 / 2026-10 / 79.00元」→ 作者、出版社、年。
+
+    想读页的 div.pub 没有「作者：」这种标签，只能按斜杠拆；年份和定价从右往左认，
+    剩下的全算作者，多作者（A / B / 出版社 / 年）才不会被截掉一个。
+    """
+    parts = [p.strip() for p in re.split(r'\s*/\s*', text or '') if p.strip()]
+    if parts and re.search(r'\d+(?:\.\d+)?\s*元', parts[-1]):
+        parts.pop()
+    year = ''
+    for i in range(len(parts) - 1, -1, -1):
+        if re.fullmatch(r'(?:19|20)\d{2}(?:-\d{1,2})?', parts[i]):
+            year = only_year(parts.pop(i))
+            break
+    publisher = parts.pop() if parts else ''
+    return ' / '.join(parts), publisher, year
+
+
+def _attr(tag, name):
+    m = re.search(r'\b%s="([^"]*)"' % re.escape(name), tag or '')
+    return _html.unescape(m.group(1)) if m else ''
+
+
+def parse_wish_page(html):
+    """想读列表每条是 <li class="subject-item">，结构跟豆列完全不同：
+    div.pic > img 是封面，div.info > h2 > a 是书名和条目链接，div.pub 是作者/出版社/年。
+    """
+    books = []
+    for blk in re.split(r'<li[^>]*class="[^"]*subject-item[^"]*"', html)[1:]:
+        m = re.search(
+            r'<h2[^>]*>[\s\S]{0,300}?<a[^>]*href="([^"]*subject/(\d+)/?)"[^>]*>([\s\S]*?)</a>',
+            blk)
+        if not m:
+            continue
+        url, sid, title_html = m.group(1), m.group(2), m.group(3)
+        title = _clean(title_html) or _attr(m.group(0), 'title')
+        if not title:
+            continue
+        cover = ''
+        pic = re.search(r'<div class="pic">([\s\S]*?)</div>', blk)
+        if pic:
+            img = re.search(r'<img[^>]*>', pic.group(1))
+            if img:
+                cover = _attr(img.group(0), 'data-src') or _attr(img.group(0), 'src')
+        pub = re.search(r'<div class="pub">([\s\S]*?)</div>', blk)
+        author, publisher, year = _split_pub(_clean(pub.group(1)) if pub else '')
+        books.append({
+            'id': sid,
+            'title': title,
+            'url': url,
+            'cover': cover,
+            'rating': '',
+            'author': author,
+            'publisher': publisher,
+            'year': year,
             'isbn': '',
         })
     return books
+
+
+def parse_wish_next(html, base_url):
+    """想读页自带 <link rel="next">；跟着它走，不猜一页是 15 还是 30。"""
+    m = re.search(r'<link\s+rel="next"\s+href="([^"]+)"', html, re.I)
+    if not m:
+        m = re.search(r'<span class="next">[\s\S]{0,400}?<a[^>]*href="([^"]+)"', html)
+    if not m:
+        return ''
+    nxt = urllib.parse.urljoin(base_url, _html.unescape(m.group(1)))
+    return nxt if nxt != base_url else ''
+
+
+def check_wish_page(html):
+    """想读页读不到时给出「为什么」，别把私密/改版当成「已经到底了」。"""
+    if 'interest-list' in html:
+        return
+    head = html[:4000]
+    if '登录' in head or 'accounts/login' in head or '仅自己可见' in head:
+        raise DoubanPrivate()
+    if '页面不存在' in html or '你要访问的页面不存在' in html:
+        raise DoubanGone()
+    raise DoubanFormat()
 
 
 ISBN_PATTERNS = [
@@ -344,30 +579,104 @@ def parse_isbn(html):
     return ''
 
 
-def douban_get(url, timeout=20):
+class DoubanBlocked(RuntimeError):
+    """豆瓣的拦截页 / 403 / 429。retry_after 是还要等多少秒再试。"""
+
+    def __init__(self, retry_after=0):
+        minutes = max(1, (int(retry_after) + 59) // 60)
+        super().__init__('豆瓣暂时限制了访问，约 %d 分钟后再试' % minutes)
+        self.retry_after = int(retry_after)
+
+
+class DoubanListError(RuntimeError):
+    """列表页本身读不了：私密、地址不存在、页面改版。
+
+    这些和反爬是两回事，不能进 10 分钟冷却——否则用户改一次隐私设置，
+    就要白等十分钟，重试还会拿回同一句「豆瓣限制了访问」。
+    """
+
+
+class DoubanPrivate(DoubanListError):
+    def __init__(self):
+        super().__init__('这份想读列表不是公开的：在豆瓣把它设为公开后再试')
+
+
+class DoubanGone(DoubanListError):
+    def __init__(self):
+        super().__init__('这个豆瓣想读地址不存在，检查一下地址')
+
+
+class DoubanFormat(DoubanListError):
+    def __init__(self):
+        super().__init__('豆瓣想读页的样子跟程序认的不一样，可能改版了，要更新程序')
+
+
+def douban_blocked_for():
+    """冷却还剩多少秒。0 = 现在可以请求。"""
+    with DOUBAN_BLOCK_LOCK:
+        return max(0, int(DOUBAN_BLOCKED_UNTIL - time.time()))
+
+
+def _mark_douban_blocked():
+    global DOUBAN_BLOCKED_UNTIL
+    with DOUBAN_BLOCK_LOCK:
+        DOUBAN_BLOCKED_UNTIL = max(DOUBAN_BLOCKED_UNTIL, time.time() + DOUBAN_BLOCK_COOL)
+        left = int(DOUBAN_BLOCKED_UNTIL - time.time())
+    return DoubanBlocked(left)
+
+
+def douban_get(url, timeout=20, private_hint=False):
     """抓豆瓣页面，并把「反爬拦截页」当成失败。
 
-    豆瓣没有公开 API，详情页只能照网页解析。连续快速请求会返一个「有异常请求」
+    豆瓣没有公开 API，页面只能照网页解析。连续快速请求会返一个「有异常请求」
     提示页（HTTP 200），如果照常解析就会得到一本空书——必须显式识别出来，
     让上层保留旧缓存/显示可重试的错误，而不是把空数据写进缓存。
+    识别到一次就进入冷却：冷却期内直接抛 DoubanBlocked，不再往上发请求。
+
+    private_hint=True 用于想读列表：403 也可能是「仅自己可见」，这时响应体里
+    是登录/权限提示而不是反爬标记。分出来单独报错，别让隐私设置背反爬的锅。
     """
     global DOUBAN_LAST_AT
+    left = douban_blocked_for()
+    if left > 0:
+        raise DoubanBlocked(left)
     with DOUBAN_GAP_LOCK:
         wait = DOUBAN_MIN_GAP - (time.time() - DOUBAN_LAST_AT)
         if wait > 0:
             time.sleep(wait)
         DOUBAN_LAST_AT = time.time()
-    page = http_get(url, timeout=timeout, headers={'Referer': 'https://www.douban.com/'})
+    try:
+        page = http_get(url, timeout=timeout, headers={'Referer': 'https://www.douban.com/'})
+    except urllib.error.HTTPError as e:
+        # 403/418/429 都是豆瓣对抓取的明确拒绝，跟拦截页同等处理
+        if e.code in (403, 418, 429):
+            if private_hint and e.code == 403:
+                try:
+                    body = e.read().decode('utf-8', 'ignore')[:4000]
+                except Exception:
+                    body = ''
+                anti = ('有异常请求', 'sec.douban.com', '禁止访问')
+                private = ('登录', '仅自己可见', '没有权限')
+                if body and not any(x in body for x in anti) and any(x in body for x in private):
+                    raise DoubanPrivate()
+            raise _mark_douban_blocked()
+        raise
     head = page[:4000]
     if 'sec.douban.com' in head or '有异常请求' in head or '禁止访问' in head:
-        raise RuntimeError('豆瓣拒绝了这次请求，请稍后再试')
+        raise _mark_douban_blocked()
     return page
 
 
 def fetch_isbn(subject_url):
-    """详情页里 ISBN 在 #info 的 ISBN: 标签后。失败了不影响主流程。"""
+    """详情页里 ISBN 在 #info 的 ISBN: 标签后。失败了不影响主流程。
+
+    拦截不能在这里吞掉：后台补 ISBN 的线程收到 DoubanBlocked 要停下来等冷却，
+    否则会对着拦截页一本一本地白打几十个请求。
+    """
     try:
         return parse_isbn(douban_get(subject_url, timeout=25))
+    except DoubanBlocked:
+        raise
     except Exception:
         return ''
 
@@ -599,115 +908,336 @@ def ensure_shl_ids(entry):
     return changed
 
 
-def _fill_isbn_bg(url, snapshot):
-    """后台补 ISBN：按豆瓣条目 url 一本一本查（1s/本），补完在锁里合并回缓存。
-    只传 url 快照、不动调用方的 books 列表，避免跟响应序列化抢同一份对象。
-    合并时按条目 url 对号入座：这期间书单可能已被刷新过，别把新数据盖回旧值。"""
-    filled = {}
-    for s in snapshot:
-        try:
-            isbn = fetch_isbn(s['url'])
-        except Exception:
-            isbn = ''
-        if isbn:
-            filled[s['url']] = isbn
-        time.sleep(1.0)   # 对豆瓣客气点，别把号封了
-    if not filled:
-        return
-    with DOULIST_LOCK:
-        latest = {}
-        if os.path.exists(DOULIST_CACHE):
-            try:
-                latest = json.load(open(DOULIST_CACHE, encoding='utf-8'))
-            except Exception:
-                latest = {}
-        entry = latest.get(url)
-        if not entry:
-            return
-        changed = False
+# 后台补 ISBN 按书单 URL 去重：同一个书单同时只跑一个 worker。
+# 用户点「继续加载」追加新书时，worker 每轮重读缓存会把新书带上；
+# 不能为每一批再起一个线程——那会对豆瓣并发请求，正好撞在反爬上。
+ISBN_WORK_LOCK = threading.Lock()
+ISBN_WORKERS = set()
+
+# 上图封面 id 的后台 worker 也一样按 URL 去重。以前它在 /api/doulist 里同步跑，
+# 书一多（每本 0.3 秒）打开书架就要干等几十秒——ISBN 补齐后先返回页面，
+# 封面 id 慢慢补，下次打开就齐了。
+SHL_WORK_LOCK = threading.Lock()
+SHL_WORKERS = set()
+
+
+def _read_doulist_cache():
+    try:
+        with open(DOULIST_CACHE, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _write_doulist_entry(url, entry, merge=False):
+    """写回缓存。merge=True 时把磁盘上已有的同书单条目按 id 并进来，
+    避免两个请求各拿旧快照互相覆盖。调用方要持有 DOULIST_LOCK。"""
+    latest = _read_doulist_cache()
+    if merge:
+        old = latest.get(url) or {}
+        base = list(old.get('books') or [])
+        have = {b.get('id') for b in base}
         for b in entry.get('books') or []:
-            if not b.get('isbn') and b.get('url') in filled:
-                b['isbn'] = filled[b['url']]
-                changed = True
-        if changed:
-            atomic_write_json(DOULIST_CACHE, latest, indent=1)
+            if b.get('id') not in have:
+                base.append(b)
+                have.add(b.get('id'))
+        entry = dict(entry)
+        entry['books'] = base
+    latest[url] = entry
+    atomic_write_json(DOULIST_CACHE, latest, indent=1)
+    return entry
 
 
-def load_doulist(raw_url, refresh=False, ttl=12 * 3600, with_isbn=True):
-    url = doulist_url_of(raw_url)
-    if not url:
-        raise ValueError('没有书单地址')
+def _isbn_worker(url):
+    """后台补 ISBN：一本一本查（1s/本），每 5 本合并回缓存。
+    撞上豆瓣拦截立刻停（冷却期内不再发请求），已经补到的先落盘。"""
+    filled = {}
 
-    cache = {}
-    if os.path.exists(DOULIST_CACHE):
+    def flush():
+        if not filled:
+            return
+        with DOULIST_LOCK:
+            latest = _read_doulist_cache()
+            entry = latest.get(url)
+            if entry:
+                changed = False
+                for b in entry.get('books') or []:
+                    if not b.get('isbn') and b.get('url') in filled:
+                        b['isbn'] = filled[b['url']]
+                        changed = True
+                if changed:
+                    atomic_write_json(DOULIST_CACHE, latest, indent=1)
+        filled.clear()
+
+    try:
+        while True:
+            entry = _read_doulist_cache().get(url)
+            books = (entry or {}).get('books') or []
+            pending = [b for b in books
+                       if not b.get('isbn') and b.get('url') and b['url'] not in filled]
+            if not pending:
+                flush()
+                return
+            for b in pending:
+                try:
+                    # 豆列和想读各有一个 worker：把「取一本 + 歇一秒」整段锁住，
+                    # 两个来源合计仍是最多 1 次/秒，不会叠成 2 次/秒去撞反爬
+                    with ISBN_PACE_LOCK:
+                        try:
+                            isbn = fetch_isbn(b['url'])
+                        finally:
+                            time.sleep(1.0)
+                except DoubanBlocked:
+                    flush()
+                    return
+                except Exception:
+                    isbn = ''
+                if isbn:
+                    filled[b['url']] = isbn
+                    if len(filled) >= 5:
+                        flush()
+            if not filled:
+                return   # 一整轮一本都没补到，别再空转
+    finally:
         try:
-            cache = json.load(open(DOULIST_CACHE, encoding='utf-8'))
+            flush()
         except Exception:
-            cache = {}
+            pass
+        with ISBN_WORK_LOCK:
+            ISBN_WORKERS.discard(url)
 
+
+def ensure_isbn_worker(url):
+    if douban_blocked_for() > 0:
+        return
+    with ISBN_WORK_LOCK:
+        if url in ISBN_WORKERS:
+            return
+        ISBN_WORKERS.add(url)
+    threading.Thread(target=_isbn_worker, args=(url,), daemon=True).start()
+
+
+def _shl_worker(url):
+    """后台补上图封面 id。在副本上跑 ensure_shl_ids，跑完再按条目 url 合并回缓存，
+    免得网络请求期间跟响应序列化抢同一份 books 列表。"""
+    try:
+        with DOULIST_LOCK:
+            entry = _read_doulist_cache().get(url)
+            entry = json.loads(json.dumps(entry)) if entry else None
+        if not entry or not ensure_shl_ids(entry):
+            return
+        with DOULIST_LOCK:
+            latest = _read_doulist_cache()
+            cur = latest.get(url)
+            if not cur:
+                return
+            src = {b.get('url'): b for b in entry.get('books') or []}
+            for b in cur.get('books') or []:
+                found = src.get(b.get('url'))
+                if found and found.get('shlId') and not b.get('shlId'):
+                    b['shlId'] = found['shlId']
+                    b['shlAt'] = found.get('shlAt') or time.time()
+            cur['shlVer'] = entry.get('shlVer', cur.get('shlVer'))
+            atomic_write_json(DOULIST_CACHE, latest, indent=1)
+    finally:
+        with SHL_WORK_LOCK:
+            SHL_WORKERS.discard(url)
+
+
+def ensure_shl_worker(url):
+    with SHL_WORK_LOCK:
+        if url in SHL_WORKERS:
+            return
+        SHL_WORKERS.add(url)
+    threading.Thread(target=_shl_worker, args=(url,), daemon=True).start()
+
+
+def _doulist_page_url(url, start):
+    if start <= 0:
+        return url
+    return url + ('&' if '?' in url else '?') + 'start=%d' % start
+
+
+def load_doulist(raw_url, refresh=False, more=False, ttl=12 * 3600, with_isbn=True,
+                 kind=None):
+    """抓一份豆瓣豆列或想读列表，按批返回。
+
+    - 默认：缓存完整且未过期就用缓存；否则从第 1 页开始抓一批。
+    - more=True：从缓存里的翻页位置接着抓下一批，并回同一份缓存。
+    - refresh=True：丢掉进度，从第 1 页重新抓一批。
+
+    豆列一页 25 本、用 ?start=N 翻页；想读一页 15 本、跟页面上的 rel="next" 走。
+    两种页面结构完全不同，解析函数也分开，只有缓存和限流这一层共用。
+    每页都走 douban_get（限流 + 反爬识别），一批最多 batch 本。
+    被拦截时：有旧数据就返回旧数据并带 blockedFor，让页面继续用旧列表；
+    没有旧数据才抛 DoubanBlocked。私密/不存在/改版走 DoubanListError，不进冷却，
+    也不会被当成「已经到底了」。
+    """
+    kind = kind or list_kind_of(raw_url)
+    if kind == 'wish':
+        url = wish_url_of(raw_url)
+        batch = WISH_BATCH
+        parse_page = parse_wish_page
+    else:
+        kind = 'doulist'
+        url = doulist_url_of(raw_url)
+        batch = DOULIST_BATCH
+        parse_page = parse_doulist_page
+    if not url:
+        raise ValueError('没有想读地址' if kind == 'wish' else '没有书单地址')
+
+    cache = _read_doulist_cache()
     hit = cache.get(url)
-    if hit and not refresh and (time.time() - hit.get('at', 0) < ttl):
+    if hit:
         # 老缓存里存的是「2017-1」这种年-月：读出来就地收成 4 位，不用等下一次重抓
         for b in hit.get('books') or []:
             b['year'] = only_year(b.get('year'))
-        return hit
+        # 旧版本缓存没有 complete 字段：有书就按完整处理，别让页面一直挂着「继续加载」
+        if 'complete' not in hit:
+            hit['complete'] = bool(hit.get('books'))
+        # 旧代码曾被反爬页骗出一份 0 本的空缓存：直接当没有，重新抓
+        if not hit.get('books'):
+            hit = None
 
-    first = http_get(url, headers={'Referer': 'https://www.douban.com/'})
-    m = re.search(r'<title>([\s\S]*?)</title>', first)
-    name = _clean(m.group(1)).replace('豆瓣', '').strip(' |｜') if m else ''
-    books = parse_doulist_page(first)
+    if hit and not refresh and not more:
+        serve = None
+        if hit.get('complete'):
+            if time.time() - hit.get('at', 0) < ttl:
+                serve = hit
+        else:
+            # 分批抓到一半：先把已有的给页面，下一批等用户点「继续加载」
+            serve = hit
+        if serve:
+            # 缓存命中也补 ISBN：补全线程按缓存里的书逐本抓，只在真的抓过列表后才启动的话，
+            # 重启后只读缓存的老书单永远补不上（想读页本身没有 ISBN）
+            if with_isbn:
+                ensure_isbn_worker(url)
+            return serve
 
-    # 翻页：?start=25,50,... 直到没有新条目
-    start = 25
-    while start < 500:
+    old_books = list(hit.get('books') or []) if hit else []
+    if more:
+        if not hit or hit.get('complete') or hit.get('truncated'):
+            return hit or {'url': url, 'kind': kind, 'name': '', 'at': 0, 'books': [],
+                           'complete': True, 'nextStart': 0, 'nextUrl': ''}
+        start = int(hit.get('nextStart') or len(old_books))
+        cursor = hit.get('nextUrl') or ''
+        books = list(old_books)
+        if kind == 'wish' and not cursor:
+            # 想读缓存是这版才加的，正常都有 nextUrl；万一没有就当已到底，
+            # 别从第 1 页重抓一遍把同一批书叠进去
+            out = dict(hit)
+            out['complete'] = True
+            return out
+    else:
+        start = 0
+        cursor = url
+        books = []
+
+    # 冷却期内不再打豆瓣：有旧数据就照常返回，只是标注还要等多久
+    left = douban_blocked_for()
+    if left > 0:
+        if hit:
+            out = dict(hit)
+            out['blockedFor'] = left
+            return out
+        raise DoubanBlocked(left)
+
+    name = (hit or {}).get('name', '')
+    seen = {b.get('id') for b in books}
+    added = 0
+    complete = False
+    truncated = False
+    blocked_for = 0
+    failed = False
+    first_page = not more
+
+    while len(books) < DOULIST_MAX_BOOKS:
+        page_url = cursor if kind == 'wish' else _doulist_page_url(url, start)
         try:
-            nxt = http_get(url + ('&' if '?' in url else '?') + 'start=%d' % start,
-                           headers={'Referer': 'https://www.douban.com/'})
+            page = douban_get(page_url, timeout=25, private_hint=(kind == 'wish'))
+        except DoubanBlocked as e:
+            blocked_for = e.retry_after
+            break
+        except DoubanListError:
+            # 私密 / 地址不存在 / 改版：不是反爬，不进冷却，原样告诉用户。
+            # 手上还有旧数据也照抛——用户多半是刚把列表设成私密，得让他知道
+            raise
         except Exception:
+            failed = True
             break
-        more = parse_doulist_page(nxt)
-        if not more:
+        if first_page:
+            name = page_name(page) or name
+            first_page = False
+        if kind == 'wish':
+            check_wish_page(page)
+            page_books = parse_page(page)
+            cursor = parse_wish_next(page, page_url)
+        else:
+            page_books = parse_page(page)
+        if not page_books:
+            # 想读页有「下一页」却一条都没解析出来，只能是结构变了；
+            # 当成到底会把半份列表写成完整缓存
+            if kind == 'wish' and cursor:
+                raise DoubanFormat()
+            complete = True
             break
-        seen = {b['id'] for b in books}
-        more = [b for b in more if b['id'] not in seen]
-        if not more:
+        fresh = [b for b in page_books if b.get('id') not in seen]
+        if not fresh:
+            complete = True
             break
-        books.extend(more)
+        for b in fresh:
+            seen.add(b.get('id'))
+        books.extend(fresh)
+        added += len(fresh)
+        if kind == 'wish':
+            # 想读一批就是一个请求，翻页位置已经跟着 rel="next" 更新好了
+            if not cursor:
+                complete = True
+            break
         start += 25
+        if added >= batch:
+            break
 
-    # 补 ISBN 不再挡在响应路径上：一本 1 秒的请求间隔（对豆瓣客气，别把号封了），
-    # 100 本的新书单会让 /api/doulist 干等 100 秒。现在立刻返回书单（缺 ISBN 的书
-    # 前端会先匹配上图版本，一样能用），后台线程慢慢补、补完合并回缓存，下次打开就齐了
-    if with_isbn:
-        missing = [b for b in books if not b.get('isbn')]
-        if missing:
-            threading.Thread(target=_fill_isbn_bg, daemon=True,
-                             args=(url, [{'url': b['url']} for b in missing])).start()
+    if kind == 'doulist' and start >= DOULIST_MAX_BOOKS:
+        truncated = True
+    elif len(books) >= DOULIST_MAX_BOOKS:
+        truncated = True
 
-    # 翻页是否完整：跑完 500 或自然结束（more 为空）算完整；中间 break（403/超时）算不完整
-    complete = (start >= 500) or (not more)
-    out = {'url': url, 'name': name, 'at': time.time(), 'books': books, 'complete': complete}
+    # 一本都没拿到：有旧数据就认旧的；没有旧数据就明确报错，
+    # 别让页面把「被拦截 / 网络失败」显示成「尚未设置书单」
+    if not books:
+        if blocked_for and old_books:
+            out = dict(hit)
+            out['blockedFor'] = blocked_for
+            return out
+        if blocked_for:
+            raise DoubanBlocked(blocked_for)
+        noun = '想读列表' if kind == 'wish' else '书单'
+        if failed:
+            raise RuntimeError('网络请求失败，没能读到豆瓣%s' % noun)
+        raise RuntimeError('豆瓣没有返回%s条目，可能暂时被限制，请稍后再试' % noun)
+
+    # 自动续期（不是用户点刷新）撞上一批抓不完的长书单时，不能把更全的旧缓存
+    # 覆盖成一小截。显式刷新才允许用新进度替换——页面会明说「已载入 N 本」。
+    if not more and not refresh and not complete and len(books) < len(old_books):
+        out = dict(hit)
+        out['blockedFor'] = blocked_for
+        return out
+
+    out = {
+        'url': url, 'kind': kind, 'name': name, 'at': time.time(), 'books': books,
+        'complete': complete, 'nextStart': 0 if complete else start,
+        'nextUrl': '' if complete or kind != 'wish' else cursor,
+        'truncated': truncated,
+    }
     with DOULIST_LOCK:
-        # 写前重读最新缓存再合并：两个不同 URL 并发抓取时，各读到的可能都是旧版本，
-        # 直接覆盖会把对方的条目写没；重读合并保证谁的条目都不丢
-        latest = {}
-        if os.path.exists(DOULIST_CACHE):
-            try:
-                latest = json.load(open(DOULIST_CACHE, encoding='utf-8'))
-            except Exception:
-                latest = {}
-        # 撞上反爬页 / 网络抖一下都会解析出 0 本书。直接覆盖会把好数据清空，
-        # 而且 TTL 内（12 小时）每次刷新读到的都是这份空的，用户以为书单没了。
-        # 新结果不如旧结果时认旧的：这次抓取不算数，下次再试
-        old = latest.get(url) or {}
-        old_books = old.get('books') or []
-        if not books and old_books:
-            return old
-        # 翻页被截断（complete=False）且新结果比旧结果少，保留旧数据，别把书丢
-        if not out.get('complete', True) and len(books) < len(old_books):
-            return old
-        latest[url] = out
-        atomic_write_json(DOULIST_CACHE, latest, indent=1)
+        out = _write_doulist_entry(url, out, merge=bool(more))
+    # blockedFor 只在这一响应里有效，不落缓存——否则重启后还在倒计时
+    if blocked_for:
+        out = dict(out)
+        out['blockedFor'] = blocked_for
+    if with_isbn:
+        ensure_isbn_worker(url)
     return out
 
 
@@ -1090,6 +1620,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.api_venues()
         if path == '/api/doulist':
             return self.api_doulist()
+        if path == '/api/update-check':
+            return self.json(update_peek())
         if path == '/api/editions':
             return self.api_editions()
         if path == '/api/cover':
@@ -1108,6 +1640,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.proxy(post=True)
         if path == '/api/config':
             return self.api_save_config()
+        if path == '/api/update-check':
+            if not self.write_ok():
+                return self.deny_write()
+            return self.json(update_check())
         if path == '/api/restart':
             return self.api_restart()
         if path == '/api/venues/geocode':
@@ -1210,8 +1746,12 @@ class Handler(SimpleHTTPRequestHandler):
             'version': VERSION,
             'build': BUILD,
             'bootId': BOOT_ID,
+            # 设置面板里那个「GitHub 项目主页」直接用服务端给的地址
+            'homepage': PROJECT_URL,
             # 书单地址属于个人数据：手机能读结果，但没必要把「你订阅了哪份豆列」也发过去
+            # 想读地址里还带着豆瓣账号 ID，更要只留在本机
             'doulist_url': cfg.get('doulist_url', '') if peer_local else '',
+            'wish_url': cfg.get('wish_url', '') if peer_local else '',
             # 手机打开时设置面板是只读的，前端据此禁用保存/测试，别再让人点出一个 403
             'readOnly': not peer_local,
             'geocode': {
@@ -1317,6 +1857,11 @@ class Handler(SimpleHTTPRequestHandler):
             if 'doulist_url' in body:
                 v = take_str(body, 'doulist_url', 2048)
                 cfg['doulist_url'] = v or ''
+            if 'wish_url' in body:
+                v = take_str(body, 'wish_url', 2048)
+                # 地址当场校验：影视「想看」页和乱填的地址在这里就挡下来，
+                # 别等刷新书架时才报错
+                cfg['wish_url'] = wish_url_of(v) if v else ''
             if 'lan' in body:
                 if not isinstance(body['lan'], bool):
                     raise ValueError('lan 必须是布尔值')
@@ -1424,26 +1969,36 @@ class Handler(SimpleHTTPRequestHandler):
     def api_doulist(self):
         q = self.query()
         cfg = load_config()
-        url = q.get('url') or cfg.get('doulist_url') or ''
-        # 没配书单是正常初始状态（新装的包就是空的），不是一个错误
+        kind = 'wish' if q.get('source') == 'wish' else 'doulist'
+        if kind == 'wish':
+            url = q.get('url') or cfg.get('wish_url') or ''
+        else:
+            url = q.get('url') or cfg.get('doulist_url') or ''
+        # 没配列表是正常初始状态（新装的包就是空的），不是一个错误
         if not url.strip():
-            return self.json({'url': '', 'name': '', 'fetchedAt': '',
-                              'books': [], 'empty': True})
+            return self.json({'url': '', 'kind': kind, 'name': '', 'fetchedAt': '',
+                              'books': [], 'empty': True, 'complete': True})
         try:
-            data = load_doulist(url, refresh=q.get('refresh') in ('1', 'true'))
+            data = load_doulist(url, kind=kind,
+                                refresh=q.get('refresh') in ('1', 'true'),
+                                more=q.get('more') in ('1', 'true'))
+        except DoubanBlocked as e:
+            return self.json({'error': str(e), 'blockedFor': e.retry_after}, 502)
+        except ValueError as e:
+            return self.json({'error': str(e)}, 400)
         except Exception as e:
-            return self.json({'error': '抓书单失败：%s' % e}, 502)
-        # 旧缓存的书没有 shlId（封面字段），补齐后写回，下次就不用再查
-        if ensure_shl_ids(data):
-            with DOULIST_LOCK:
-                latest = load_json(DOULIST_CACHE, {})
-                latest[data['url']] = data
-                atomic_write_json(DOULIST_CACHE, latest, indent=1)
+            return self.json({'error': '%s失败：%s' % ('抓想读' if kind == 'wish' else '抓书单', e)}, 502)
+        # 封面 id 在后台补：以前在这里同步逐本查上图，书一多就拖住整个响应
+        ensure_shl_worker(data['url'])
         self.json({
             'url': data['url'],
+            'kind': kind,
             'name': data.get('name', ''),
             'fetchedAt': time.strftime('%Y-%m-%d %H:%M', time.localtime(data.get('at', time.time()))),
             'books': data['books'],
+            'complete': data.get('complete', True),
+            'truncated': bool(data.get('truncated')),
+            'blockedFor': int(data.get('blockedFor') or 0),
         })
 
     def api_editions(self):
