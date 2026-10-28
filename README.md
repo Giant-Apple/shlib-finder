@@ -27,8 +27,11 @@
 ### 打包版（Windows，免装 Python）
 
 1. 在 [GitHub 项目主页](https://github.com/Giant-Apple/shlib-finder) 右侧打开 **Releases**，下载 `shlib-finder-v<版本>.zip`（包里自带 Python）。
-2. 解压到任意目录，双击 `start-server.bat`，浏览器会自动打开 <http://127.0.0.1:8765/>。
+2. 解压到任意目录，得到一个 `shlib-finder-<版本>` 文件夹，双击里面的 `start-server.bat`，浏览器会自动打开 <http://127.0.0.1:8765/>。
 3. 用完关掉命令行窗口就是停止；想重开双击 `restart-server.bat`。
+
+升级：把新包解压到旁边，再将旧目录里的 `config.json` 和 `data` 文件夹复制过去，
+书单、地图 Key 和查过的结果就都在。
 
 打包版只有 Windows。macOS / Linux 用下面的源码方式。
 
