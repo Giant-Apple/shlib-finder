@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>上图馆藏查询 · 把豆瓣书单变成一张「现在能借」的地图</title>
-<meta name="description" content="豆瓣豆列、想读和手动加的书合成一个书架，按 ISBN 查上海图书馆和全市分馆有没有、能不能借，按远近排好并标在地图上。装在自己电脑上，不用注册。">
+<meta name="description" content="开源免费的个人工具：把豆瓣书单合成一个书架，按 ISBN 查上海图书馆和全市分馆有没有、能不能借，按远近排好并标在地图上。装在自己电脑上，不用注册。">
 <meta name="theme-color" content="#f2f7fa">
 <meta property="og:type" content="website">
 <meta property="og:title" content="上图馆藏查询 · 豆瓣书单 → 上海图书馆在架地图">
-<meta property="og:description" content="豆列、想读、手动加的书合成一个书架；按 ISBN 查上图与全市分馆有没有、能不能借，按远近排好并标在地图上。装在自己电脑上，书架和配置只留在这台电脑上。">
+<meta property="og:description" content="开源免费。豆瓣书单合成一个书架，按 ISBN 查上图与全市分馆有没有、能不能借，按远近排好并标在地图上。装在自己电脑上，书架和配置只留在这台电脑上。">
 <meta property="og:image" content="https://raw.githubusercontent.com/Giant-Apple/shlib-finder/main/docs/feature/01-hero.jpg">
 <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -225,7 +225,7 @@
   }
   .privacy-head { max-width: 660px; }
   .privacy-head p { color: var(--ink-2); margin: 0; font-size: 16px; }
-  .privacy-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-top: 34px; }
+  .privacy-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px; margin-top: 34px; }
   .privacy-item { padding-top: 18px; border-top: 1px solid rgba(10, 92, 138, .14); }
   .privacy-item h3 {
     display: flex; align-items: center; gap: 8px;
@@ -294,8 +294,8 @@
     font-size: 15.5px; font-weight: 620; color: var(--ink);
   }
   .faq summary::-webkit-details-marker { display: none; }
-  /* 「未知」是界面上的一个词，窄屏换行时不能从中间拆开 */
-  .faq .keep { white-space: nowrap; }
+  /* 「未知」这类界面上的词，窄屏换行时不能从中间拆开 */
+  .keep { white-space: nowrap; }
   .faq summary svg { width: 18px; height: 18px; color: var(--ink-3); flex: none; transition: transform .18s ease; }
   .faq details[open] summary svg { transform: rotate(180deg); color: var(--brand); }
   .faq .a { padding: 0 0 20px; color: var(--ink-2); font-size: 14.5px; }
@@ -397,12 +397,11 @@
         <div>
           <span class="eyebrow">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
-            非官方项目 · 在你自己的电脑上运行
+            开源免费 · 非官方项目
           </span>
           <h1>豆瓣书单里的书，<br>哪几本<span class="hl">现在能借</span>？</h1>
           <p class="lede">
-            豆列、想读、手动加的书合成一个书架；按 ISBN 查上海图书馆和全市分馆有没有、能不能借，
-            再按远近排好、标在地图上。
+            把豆瓣书单变成一张「现在能借」的地图：上海图书馆和全市分馆有没有、能不能借，按远近排好。
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="https://github.com/Giant-Apple/shlib-finder/releases/latest"
@@ -417,8 +416,7 @@
             </a>
           </div>
           <p class="cta-note">
-            Windows 解压即用；macOS / Linux 需
-            <code>Python 3.9+</code>。
+            Windows 解压即用，不用装任何东西。
           </p>
         </div>
         <div>
@@ -430,10 +428,10 @@
       </div>
 
       <div class="stats">
-        <div class="stat"><strong>479</strong><span>家馆，都有地址、电话和开放时间</span></div>
-        <div class="stat"><strong>每册</strong><span>在架还是借出、能不能外借、索书号</span></div>
-        <div class="stat"><strong>3 种</strong><span>书单来源：豆列、想读、手动添加</span></div>
-        <div class="stat"><strong>不上传</strong><span>不登录、不统计，书单只在你电脑上</span></div>
+        <div class="stat"><strong>479</strong><span>家馆，都带地址和电话</span></div>
+        <div class="stat"><strong>每册</strong><span>在架还是借出、能不能外借</span></div>
+        <div class="stat"><strong>免费</strong><span>开源，代码全部公开可查</span></div>
+        <div class="stat"><strong>不上传</strong><span>书单只留在你自己的电脑上</span></div>
       </div>
     </div>
   </section>
@@ -444,36 +442,36 @@
       <div class="sec-head">
         <span class="kicker">它做什么</span>
         <h2>查书这件事，本来不该这么费劲</h2>
-        <p>不用在豆瓣、上图网站和地图之间来回切；书单、馆藏、远近放在同一屏。</p>
+        <p>书单、馆藏、远近放在同一屏，不用来回切。</p>
       </div>
       <div class="cards">
         <article class="card">
           <span class="card-ico" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h8"/><path d="M8 11h5"/></svg>
           </span>
-          <h3>三种来源，一个书架</h3>
-          <p>豆列、「想读」和手动加的书放在一起；豆列和想读里重复的，只算豆列。书单很长时先显示前面一部分，随时可以接着看；每组能收起，重开页面还是原样。</p>
+          <h3>一个书架，三种来源</h3>
+          <p>把豆列、「想读」和你手动加的书放在一起，重复的只算一次。</p>
         </article>
         <article class="card">
           <span class="card-ico" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/><path d="M8 11h6"/></svg>
           </span>
           <h3>查到「哪一本能借」</h3>
-          <p>按 ISBN 查每家馆的每一册：在架还是借出、能不能外借、在哪个阅览室、索书号。多个版本先选再查；结果能只看「可借」或「营业中」。</p>
+          <p>每一册都能看到在架还是借出、能不能外借、在哪个阅览室。</p>
         </article>
         <article class="card">
           <span class="card-ico" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
           </span>
           <h3>按距离排，也在图上看</h3>
-          <p>479 家馆按远近排，10 公里内给出骑车时间。编号和地图上的点对应，点哪边都能定位，滚轮能缩放。点一下打电话，或打开高德导航。</p>
+          <p>按远近排好并标在地图上，还能给出骑车时间。</p>
         </article>
         <article class="card">
           <span class="card-ico" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>
           </span>
-          <h3>手机上也能查，只是不能改</h3>
-          <p>手机连着同一个 Wi-Fi，用浏览器打开就行，不用装 App；改设置要回电脑。</p>
+          <h3>手机上也能查</h3>
+          <p>手机连同一个 Wi-Fi，用浏览器打开就能查，不用装 App。</p>
         </article>
       </div>
     </div>
@@ -485,19 +483,15 @@
       <div class="split-copy">
         <span class="kicker">书架</span>
         <h2>书架先说清楚，再去查馆藏</h2>
-        <p>每本书一行：书名、作者 / 出版社 / 年份、ISBN。封面直接标状态：「都已借出」「仅馆内」「无此版本」。</p>
+        <p>每本书一行，封面直接标出「都已借出」「仅馆内」「无此版本」。</p>
         <ul class="ticks">
           <li>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            没有 ISBN，先在上图网站按书名找同一版本
+            没有 ISBN 的书，先按书名找到同一版本再查
           </li>
           <li>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            只有一个版本就直接查，有多个先让你选，没有就直说
-          </li>
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            从上图补的书名、作者只填空缺，不改你原来写的
+            有多个版本先让你选，一个都没有会直说
           </li>
         </ul>
       </div>
@@ -516,19 +510,15 @@
       <div class="split-copy">
         <span class="kicker">手机</span>
         <h2>不用装 App，扫一下就能查</h2>
-        <p>在设置里打开「从其他设备访问」，会得到一个同一 Wi-Fi 下能用的网址和二维码。手机浏览器打开就是同一个界面。</p>
+        <p>在设置里打开「从其他设备访问」，会得到一个<span class="keep">同一 Wi-Fi</span> 下能用的网址和二维码。</p>
         <ul class="ticks">
           <li>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            只在你家的网络里用，不经过外部服务器
+            不打开就只有这台电脑能用，共享也不出家门
           </li>
           <li>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            手机上只能查，改不了设置
-          </li>
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            默认只有这台电脑能打开，共享也只限同一 Wi-Fi
+            手机上能查、能看地图，改设置要回电脑
           </li>
         </ul>
       </div>
@@ -548,7 +538,7 @@
         <div class="privacy-head">
           <span class="kicker">本地优先</span>
           <h2>查书这件事，不必交出什么</h2>
-          <p>程序装在你自己的电脑上：没有云端账号，也没有人统计你查了什么。</p>
+          <p>程序跑在你自己的电脑上：没有云端账号，也没有人统计你查了什么。</p>
         </div>
         <div class="privacy-grid">
           <div class="privacy-item">
@@ -556,21 +546,14 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
               不登录、不统计
             </h3>
-            <p>只看豆瓣、上图公开的页面；不统计，也不自动更新。查书会连豆瓣、上图和高德；只有你点「检查更新」，才连 GitHub，偶尔走它的加速线路。</p>
+            <p>查书时只连豆瓣、上图和高德；只有你点「检查更新」才连 GitHub。</p>
           </div>
           <div class="privacy-item">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
               只存在你电脑上
             </h3>
-            <p>书单、查过的结果、地址和高德 Key 都存在你自己电脑上的 <code>config.json</code> 和 <code>data</code> 文件夹里；手输的地址只在查距离时发给高德。</p>
-          </div>
-          <div class="privacy-item">
-            <h3>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>
-              手机上也只能看
-            </h3>
-            <p>手机端只开放查询和地图，拿不到你的地址和 Key；不共享时，只有这台电脑能打开。</p>
+            <p>书单、查过的结果、地址和 Key 都存在这台电脑上，不会上传。</p>
           </div>
         </div>
         <p class="privacy-note">
@@ -586,7 +569,7 @@
       <div class="sec-head">
         <span class="kicker">快速开始</span>
         <h2>三分钟，从下载到第一本书</h2>
-        <p>Windows 下载免安装版；macOS / Linux 用源码运行。</p>
+        <p>Windows 用免安装版；macOS / Linux 用源码。</p>
       </div>
 
       <div class="start-grid">
@@ -594,11 +577,11 @@
           <span class="tag">Windows · 推荐</span>
           <h3>免安装，解压就能用</h3>
           <ol class="steps">
-            <li><span>打开 <a href="https://github.com/Giant-Apple/shlib-finder/releases/latest" target="_blank" rel="noopener noreferrer">下载页</a>，选 <b>shlib-finder-v*.zip</b>。</span></li>
+            <li><span>打开 <a href="https://github.com/Giant-Apple/shlib-finder/releases/latest" target="_blank" rel="noopener noreferrer">下载页</a>，下载最新的 zip 压缩包。</span></li>
             <li><span>解压，双击 <b>start-server.bat</b>。</span></li>
             <li><span>浏览器会自动打开查询页面。</span></li>
           </ol>
-          <p class="start-foot" style="margin-top:16px">关掉弹出的窗口，程序就停了；下次双击 <code>restart-server.bat</code>。</p>
+          <p class="start-foot" style="margin-top:16px">关掉弹出的窗口，程序就停了；下次重新双击。</p>
         </div>
 
         <div class="start-card">
@@ -607,13 +590,12 @@
 <pre><code>git clone https://github.com/Giant-Apple/shlib-finder.git
 cd shlib-finder
 ./start-server.sh   <span class="cm"># Windows 用 start-server.bat</span></code></pre>
-          <p class="start-foot">需要 Python 3.9 或更新，不用装别的。出问题看 <code>data/server.log</code>；改完设置点「重启服务」。</p>
+          <p class="start-foot">需要 Python 3.9 或更新，除此之外不用装别的。</p>
         </div>
       </div>
 
       <p class="setup-line">
-        <b>第一次打开：</b>设位置（默认人民广场，地址只能填上海）→ 填豆列 / 想读链接（可选，需公开）→
-        填高德 Key（可选）→ 要用手机看时再打开共享。也可以直接改 <code>config.json</code>。
+        <b>第一次打开：</b>设个位置就能查书，豆列、高德 Key 和手机共享都可以之后再填。
       </p>
     </div>
   </section>
@@ -630,43 +612,45 @@ cd shlib-finder
           <summary>这个程序和上图、豆瓣是什么关系？
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
-          <div class="a"><p>没有关系。非官方项目，与上海图书馆、豆瓣无隶属或合作；馆藏数据来自公开页面。</p></div>
+          <div class="a"><p>没有关系，是个非官方项目，馆藏数据只来自公开页面。</p></div>
+        </details>
+        <details>
+          <summary>要收费吗？源码公开吗？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a"><p>不收钱，也没有广告和内购；源码公开在 GitHub，任何人都能读、能改、自己打包。</p></div>
         </details>
         <details>
           <summary>需要注册或登录吗？
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
-          <div class="a"><p>不需要。不填豆瓣链接，也能手动加书、按书名或 ISBN 查馆藏。</p></div>
+          <div class="a"><p>不需要；不填豆瓣链接，也能手动加书、按书名查馆藏。</p></div>
         </details>
         <details>
           <summary>「想读」是私密的，为什么读不到？
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
-          <div class="a"><p>只看公开的页面，不用你的账号登录。想读要在豆瓣设成公开；设成私密会直接告诉你，不会显示成空列表。</p></div>
+          <div class="a"><p>只用公开页面，不登你的账号，所以「想读」要在豆瓣设为公开；读不到时会直接告诉你。</p></div>
         </details>
         <details>
           <summary>查到的是最新的吗？
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
-          <div class="a"><p>是当场从上图取的；12 小时内会沿用上一次的结果，并标出上次是几点查的。想看最新的，点「重新查询」。</p></div>
+          <div class="a"><p>是当场从上图中查的，结果上会标出查的时间；想刷新点<span class="keep">「重新查询」</span>。</p></div>
         </details>
         <details>
           <summary>一定要申请高德 Key 吗？
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
-          <div class="a">
-            <p>不填也能查馆藏，只是没有地址和远近；填了才有地图、骑车时间，也能按远近排。</p>
-            <p>高德有两种 Key，别拿错：算远近要用 <b>Web 服务</b>，显示地图要用 <b>Web 端（JS API）</b>，选错就不会有结果。</p>
-            <p>2021 年 12 月以后申请的地图 Key，还要配一个「安全密钥」，否则地图出不来。腾讯的 Key 只能把地址变成位置，给不了骑车时间。</p>
-          </div>
+          <div class="a"><p>不填也能查馆藏，只是没有地图和远近。</p></div>
         </details>
         <details>
           <summary><span>地址要在上海吗？距离为什么显示<span class="keep">「未知」？</span></span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
           <div class="a">
-            <p>手输的地址只认上海，别的城市会直接拒绝。479 家馆里有 429 家能算出距离，其余显示<span class="keep">「距离未知」</span>；没设位置时，按能借的册数排。</p>
-            <p>开馆时间以各馆公告为准；节假日只提醒，去之前最好打个电话。</p>
+            <p>地址只认上海，别的城市会直接拒绝。少数馆算不出距离，会标成<span class="keep">「距离未知」</span>。</p>
+            <p>开馆时间以各馆公告为准，节假日去之前最好打个电话。</p>
           </div>
         </details>
         <details>
@@ -674,8 +658,7 @@ cd shlib-finder
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
           <div class="a">
-            <p>macOS / Linux 要按源码方式运行；免安装版只有 Windows。</p>
-            <p>手机连同一个 Wi-Fi，打开给出的网址或扫码，不用装 App。</p>
+            <p>免安装版只有 Windows，macOS / Linux 用源码运行；手机连同一个 Wi-Fi 打开网址就行。</p>
           </div>
         </details>
       </div>
@@ -697,8 +680,9 @@ cd shlib-finder
       </nav>
     </div>
     <p class="foot-note">
-      <strong>非官方项目</strong>，与上海图书馆、豆瓣无隶属或合作，仅供个人查询辅助。
-      馆藏数据来自公开页面，名称和标识归各自所有者；截图书目为虚构。源码以 PolyForm Noncommercial 1.0.0 发布。
+      <strong>开源免费</strong>的非官方项目，与上海图书馆、豆瓣无隶属或合作，仅供个人查询辅助。
+      馆藏数据来自公开页面，名称和标识归各自所有者；截图书目为虚构。
+      源码以 PolyForm Noncommercial 1.0.0 许可发布，个人和非商业用途免费。
     </p>
   </div>
 </footer>
