@@ -1853,23 +1853,32 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError('%s 必须是字符串' % key)
             return v.strip()[:limit]
 
+        # 校验失败要能指到具体的框：前端按 field 把那一格标红并在框下写原因。
+        # 只回一句 error，人还得自己回去猜是哪一格填错了
+        field = ''
         try:
             if 'doulist_url' in body:
+                field = 'doulist_url'
                 v = take_str(body, 'doulist_url', 2048)
                 cfg['doulist_url'] = v or ''
             if 'wish_url' in body:
+                field = 'wish_url'
                 v = take_str(body, 'wish_url', 2048)
                 # 地址当场校验：影视「想看」页和乱填的地址在这里就挡下来，
                 # 别等刷新书架时才报错
                 cfg['wish_url'] = wish_url_of(v) if v else ''
+            field = ''
             if 'lan' in body:
+                field = 'lan'
                 if not isinstance(body['lan'], bool):
                     raise ValueError('lan 必须是布尔值')
                 cfg['lan'] = body['lan']
+            field = ''
             for section, keys in (('geocode', ('provider', 'key')),
                                   ('map', ('key', 'security'))):
                 if section not in body:
                     continue
+                field = section
                 part = body[section]
                 if not isinstance(part, dict):
                     raise ValueError('%s 必须是对象' % section)
@@ -1881,7 +1890,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if section == 'geocode' and cur.get('provider') not in ('amap', 'qq'):
                     raise ValueError('Web 服务只能是 amap 或 qq')
         except ValueError as e:
-            return self.json({'error': str(e)}, 400)
+            err = {'error': str(e)}
+            if field:
+                err['field'] = field
+            return self.json(err, 400)
         save_config(cfg)
         # 开关一动手就当场换监听地址（以前要重启，可重启会把手机上正开着的页面断掉）。
         # 换不换得成不看这里的返回值：前端保存后会重新读 /api/config，那里的

@@ -755,7 +755,13 @@
       body: JSON.stringify(body || {})
     }).then(function (r) {
       return r.json().then(function (j) {
-        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        if (!r.ok) {
+          var err = new Error(j.error || ('HTTP ' + r.status));
+          // 服务端会把校验失败的字段名带回来（见 server.py 的 api_save_config），
+          // 调用方据此把那一格标红
+          if (j.field) err.field = j.field;
+          throw err;
+        }
         return j;
       });
     });
@@ -1267,18 +1273,20 @@
       if (!S.folded.manual) html += manual.map(bookRowHTML).join('');
     }
 
-    // 豆瓣两组在下：地址没配、也没有任何内容时不画这一组，别让书架挂两排空标题。
-    // 配过地址（empty=false）但列表真的是空的，仍然画出来——那是在说「列表是空的」，
-    // 跟「还没设置」是两件事
+    // 豆瓣两组在下。地址没配也照画：组标题 + 一行「尚未设置…去设置」就是填写入口。
+    // 以前这一组整个跳过，只在书架全空时露出「设置豆瓣地址」——手动加过一本书之后，
+    // 那两个入口就都没了（2026-10-28 用户报）。整块空态在上面已经 return，不会画两排空标题
     function listGroup(kind, st, books, dupNote) {
-      if (!books.length && !st.loading && !st.err && !st.warn && st.empty) return;
       var noun = kind === 'wish' ? '想读' : '豆列';
+      // 没配地址时组标题右侧不放「改地址」铅笔：下面那行「去设置」是同一个入口，不画两处
+      var editBtn = st.empty ? '' :
+        '<button type="button" class="ghost icon-btn" data-shelf-act="edit" data-field="' + kind + '" ' +
+        'title="修改豆瓣' + noun + '地址" aria-label="修改豆瓣' + noun + '地址">' +
+        icon('square-pen') + '</button>';
       html += shelfHeadHTML(
         '<img class="dblogo" src="douban-favicon.png" alt="" width="16" height="16">',
         '豆瓣' + noun, books.length,
-        '<button type="button" class="ghost icon-btn" data-shelf-act="edit" data-field="' + kind + '" ' +
-        'title="修改豆瓣' + noun + '地址" aria-label="修改豆瓣' + noun + '地址">' +
-        icon('square-pen') + '</button>' + foldBtn(kind, '豆瓣' + noun));
+        editBtn + foldBtn(kind, '豆瓣' + noun));
 
       // 收起后组内所有内容都不画：书、加载/错误提示、继续加载、重复说明
       if (S.folded[kind]) return;
@@ -1319,7 +1327,14 @@
     // 想读里跟豆列重复的那几本没有单独画出来，说一声它们去哪了，免得以为丢了
     listGroup('wish', wish, wishBooks,
       wishDup ? '另有 ' + wishDup + ' 本已在豆列里，不重复列出。' : '');
+    // 插入这一帧先关掉 .book 的 background 过渡：这一块是整块重画的，指针底下那本书
+    // 每重画一次都会从透明淡到 hover 色，一次进入页面会重画两三次，看着就是「一闪一闪」。
+    // 两帧后放开，指针真正移到别的书上时照旧淡入
+    box.classList.add('no-anim');
     box.innerHTML = html;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { box.classList.remove('no-anim'); });
+    });
 
     // 封面印章第一次见的人看不懂，书架非空时提示一次、之后不再烦。
     // 逐态文案在 .cov 的 title 里，这条只负责告诉用户「有这么几种状态、悬停能看」
@@ -3811,11 +3826,47 @@
     if (ro) closeProviderMenu(false);
   }
 
+  // 校验没过的输入框：红边 + 框下面一行原因。服务端在 400 里给 field（就是配置键名），
+  // 这里换成对应的输入框；换不出来（比如 lan 开关）返回 false，让调用方退回 toast
+  var FIELD_INPUT_ID = {
+    doulist_url: 'setDoulist',
+    wish_url: 'setWish',
+    geocode: 'setKey',
+    map: 'setMapKey'
+  };
+  var fieldErr = null;   // { input: 输入框, msg: 那行原因的节点 }
+
+  function clearFieldErr() {
+    if (!fieldErr) return;
+    fieldErr.input.classList.remove('bad');
+    if (fieldErr.msg.parentNode) fieldErr.msg.parentNode.removeChild(fieldErr.msg);
+    fieldErr = null;
+  }
+
+  function showFieldErr(field, text) {
+    var id = FIELD_INPUT_ID[field];
+    var inp = id ? $(id) : null;
+    if (!inp) return false;
+    clearFieldErr();
+    inp.classList.add('bad');
+    var msg = document.createElement('p');
+    msg.className = 'f-err';
+    msg.textContent = text;
+    // setKey 的父节点是并在同一行的那条 .row，提示要落在整格下面，不能挤进那一行
+    (inp.closest('.field') || inp.parentNode).appendChild(msg);
+    fieldErr = { input: inp, msg: msg };
+    inp.focus({ preventScroll: true });
+    // 面板可能已经滚过去了：把这一格带回视野
+    inp.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+
   // focus 传 'doulist' / 'wish' 时，打开面板后把光标落到对应地址输入框并选中整条地址
   // （「改地址」就在对应分组的组标题右边，用户点它是奔着换地址来的）
   function openSettings(focus) {
     var cfg = S.cfg || {};
     settingsReturnFocus = document.activeElement;
+    clearFieldErr();
     applyReadOnly(cfg);
     $('setDoulist').value = cfg.doulist_url || '';
     $('setWish').value = cfg.wish_url || '';
@@ -4093,7 +4144,11 @@
       if (key) loadVenues();
       if (mkey || msec) { resetAmap(); if (S.activeId) renderResult(); }
       loadLists(false);
-    }).catch(function (e) { toast('保存失败：' + e.message, 'err'); });
+    }).catch(function (e) {
+      // 校验失败：话说到那一格去（红边 + 框下原因），别再单独发一条 toast 说同一件事
+      if (e.field && showFieldErr(e.field, e.message)) return;
+      toast('保存失败：' + e.message, 'err');
+    });
   }
 
   // ---------------------------------------------------------------- 启动
@@ -4380,6 +4435,11 @@
 
   function bindSettingsModal() {
     $('setSave').addEventListener('click', saveSettings);
+    // 一动就清掉旧的校验错误：人已经在改了，红边还挂着会像没生效
+    ['setDoulist', 'setWish', 'setKey', 'setMapKey', 'setMapSec'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.addEventListener('input', clearFieldErr);
+    });
     $('setCancel').addEventListener('click', closeSettings);
     $('setClose').addEventListener('click', closeSettings);
     setupProviderSelect();
