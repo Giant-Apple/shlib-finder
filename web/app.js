@@ -86,9 +86,6 @@
       '<rect width="18" height="18" x="3" y="4" rx="2" /> <path d="M3 10h18" />',
     'triangle-alert': '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /> ' +
       '<path d="M12 9v4" /> <path d="M12 17h.01" />',
-    // 豆瓣书单「改地址」那颗铅笔：换掉整份书单，语义贴近编辑而非新增，所以不用 list-plus
-    'square-pen': '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /> ' +
-      '<path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .505-.853z" />',
     // 头部外观开关的两个状态：亮色显示太阳、暗色显示月亮（跟着当前主题换，不是并列两段）
     sun: '<circle cx="12" cy="12" r="4" /> <path d="M12 2v2" /> <path d="M12 20v2" /> ' +
       '<path d="m4.93 4.93 1.41 1.41" /> <path d="m17.66 17.66 1.41 1.41" /> ' +
@@ -1197,11 +1194,14 @@
   }
 
   function shelfHeadHTML(ico, name, n, acts) {
+    // 数量贴在最右边、带「本」：三组的标题长得一样，数字挨着组名时会被读成名字的一部分，
+    // 靠右后组名是组名、数量是数量，三组扫下来起点和终点都在同两列上
     return '<div class="shelf-grp">' +
       '<span class="sgrp-ico">' + ico + '</span>' +
       '<span class="sgrp-name">' + esc(name) + '</span>' +
-      (n ? '<span class="sgrp-n">' + n + '</span>' : '') +
-      '<span class="spacer"></span>' + (acts || '') + '</div>';
+      '<span class="spacer"></span>' +
+      (n ? '<span class="sgrp-n">' + n + ' 本</span>' : '') +
+      (acts || '') + '</div>';
   }
 
   // 组标题行尾的箭头：收起只影响这一组，别组照常。
@@ -1269,8 +1269,11 @@
     var html = '';
     // 手动添加在上：刚加的书不用穿过整份豆瓣列表才找得到
     if (manual.length) {
+      var manFold = S.folded.manual;
+      html += '<section class="shelf-sec' + (manFold ? ' folded' : '') + '">';
       html += shelfHeadHTML(icon('book-plus'), '手动添加', manual.length, foldBtn('manual', '手动添加'));
-      if (!S.folded.manual) html += manual.map(bookRowHTML).join('');
+      if (!manFold) html += manual.map(bookRowHTML).join('');
+      html += '</section>';
     }
 
     // 豆瓣两组在下。地址没配也照画：组标题 + 一行「尚未设置…去设置」就是填写入口。
@@ -1278,49 +1281,49 @@
     // 那两个入口就都没了（2026-10-28 用户报）。整块空态在上面已经 return，不会画两排空标题
     function listGroup(kind, st, books, dupNote) {
       var noun = kind === 'wish' ? '想读' : '豆列';
-      // 没配地址时组标题右侧不放「改地址」铅笔：下面那行「去设置」是同一个入口，不画两处
-      var editBtn = st.empty ? '' :
-        '<button type="button" class="ghost icon-btn" data-shelf-act="edit" data-field="' + kind + '" ' +
-        'title="修改豆瓣' + noun + '地址" aria-label="修改豆瓣' + noun + '地址">' +
-        icon('square-pen') + '</button>';
-      html += shelfHeadHTML(
+      // 组标题只留收起箭头：地址填一次就不动，日常用不上「改地址」。
+      // 填错的时候下面的「去设置」就在手边；平时改地址走设置面板的豆瓣地址一节
+      var g = shelfHeadHTML(
         '<img class="dblogo" src="douban-favicon.png" alt="" width="16" height="16">',
         '豆瓣' + noun, books.length,
-        editBtn + foldBtn(kind, '豆瓣' + noun));
+        foldBtn(kind, '豆瓣' + noun));
 
       // 收起后组内所有内容都不画：书、加载/错误提示、继续加载、重复说明
-      if (S.folded[kind]) return;
+      if (S.folded[kind]) { html += '<section class="shelf-sec folded">' + g + '</section>'; return; }
 
       if (st.loading) {
-        html += '<div class="shelf-note"><span class="spin"></span> 正在读豆瓣' + noun + '…</div>';
+        g += '<div class="shelf-note"><span class="spin"></span> 正在读豆瓣' + noun + '…</div>';
       } else if (st.err) {
         // 读取失败时旧列表还在：提示挂在上面，列表不撤，别让人以为书全丢了
-        html += '<div class="shelf-note err">' + esc(st.err) +
+        g += '<div class="shelf-note err">' + esc(st.err) +
           ' <button type="button" class="linkish" data-shelf-act="refresh" data-field="' + kind +
           '">重试</button></div>';
       } else if (st.warn) {
         // 豆瓣拦截但旧列表还在：书继续用，只把「为什么不是最新的」说清楚
-        html += '<div class="shelf-note err">' + esc(st.warn) + '</div>';
+        g += '<div class="shelf-note err">' + esc(st.warn) + '</div>';
       } else if (st.empty) {
-        html += '<div class="shelf-note">尚未设置豆瓣' + noun + '。' +
+        g += '<div class="shelf-note">尚未设置豆瓣' + noun + '。' +
           '<button type="button" class="linkish" data-shelf-act="edit" data-field="' + kind +
           '">去设置</button></div>';
       }
       if (books.length) {
-        html += books.map(bookRowHTML).join('');
+        g += books.map(bookRowHTML).join('');
         // 长列表分批抓：抓完一批先显示，下一批由用户点「继续加载」触发；
         // 冷却中不给按钮，点下去也只会拿回同一句提示
         if (st.more) {
-          html += '<div class="shelf-more"><span class="spin"></span> 正在加载更多…</div>';
+          g += '<div class="shelf-more"><span class="spin"></span> 正在加载更多…</div>';
         } else if (st.truncated) {
-          html += '<div class="shelf-more">列表太长，只载入了前 ' + books.length + ' 本。</div>';
+          g += '<div class="shelf-more">列表太长，只载入了前 ' + books.length + ' 本。</div>';
         } else if (!st.complete && !st.blockedFor) {
-          html += '<div class="shelf-more">已载入 ' + books.length + ' 本。' +
+          g += '<div class="shelf-more">已载入 ' + books.length + ' 本。' +
             '<button type="button" class="linkish" data-shelf-act="more" data-field="' + kind +
             '">继续加载</button></div>';
         }
       }
-      if (dupNote) html += '<div class="shelf-more">' + dupNote + '</div>';
+      if (dupNote) g += '<div class="shelf-more">' + dupNote + '</div>';
+      // 每组一层 section：组标题要吸顶（见 style.css 的 .shelf-grp），
+      // 得有一个只包住本组的容器，标题才会在滚到组末尾时被下一组顶走
+      html += '<section class="shelf-sec">' + g + '</section>';
     }
 
     listGroup('doulist', dou, dou.books, '');
@@ -1332,8 +1335,13 @@
     // 两帧后放开，指针真正移到别的书上时照旧淡入
     box.classList.add('no-anim');
     box.innerHTML = html;
+    // 吸顶标题的实底是算出来的（syncShelfPins），新画出来的节点身上还没有 .pin。
+    // 等两帧再补的话，正钉在顶上那条会有一帧是透明的，底下的书名直接透上来——
+    // 收起/展开恰恰就盯着这条标题看，看着就是它闪了一下。这里先立刻算一次，
+    // rAF 里那次留给迟到的高度变化（封面图落地、字体换完）
+    syncShelfPins();
     requestAnimationFrame(function () {
-      requestAnimationFrame(function () { box.classList.remove('no-anim'); });
+      requestAnimationFrame(function () { box.classList.remove('no-anim'); syncShelfPins(); });
     });
 
     // 封面印章第一次见的人看不懂，书架非空时提示一次、之后不再烦。
@@ -1344,6 +1352,19 @@
     }
   }
 
+  // 组标题吸住没有：吸住才铺实底（见 style.css 的 .shelf-grp.pin）。
+  // 静止时标题得跟面板连成一片，否则顶上两块实色跟玻璃底对不上；
+  // 而 CSS 没有「已经吸住」这个信号，只能按位置自己算
+  function syncShelfPins() {
+    var box = $('bookList');
+    if (!box || !box.clientHeight) return;   // 书单收起来时没有位置可比
+    var top = box.getBoundingClientRect().top;
+    var gs = box.querySelectorAll('.shelf-grp');
+    for (var i = 0; i < gs.length; i++) {
+      gs[i].classList.toggle('pin', gs[i].getBoundingClientRect().top <= top + 0.5);
+    }
+  }
+
   // 收起 / 展开一组：renderBooks 会换掉整块 bookList。键盘操作要把焦点还给同一组的箭头，
   // 否则焦点掉回页面开头；鼠标点的不还，否则刚点完就多一圈键盘焦点框
   function toggleFold(kind, restoreFocus) {
@@ -1351,9 +1372,32 @@
     S.folded[kind] = !S.folded[kind];
     lsSet('shlib.groups', JSON.stringify(S.folded));
     renderBooks();
+    keepFoldHead(kind);
     if (!restoreFocus) return;
     var btn = $('bookList').querySelector('[data-shelf-act="fold"][data-field="' + kind + '"]');
     if (btn) btn.focus({ preventScroll: true });
+  }
+
+  // 收起的这一组在上方、而人正滚在它中间时：整列矮了一大截，浏览器把滚动位置钳到新的
+  // 底数，刚点的那条组名会被顶出上边界——收起一个书单，结果连它的标题都找不着了，
+  // 想再展开得先往上滚。所以标题一旦落到上边界之外，就把它拉回贴着上边界
+  function keepFoldHead(kind) {
+    var box = $('bookList');
+    var btn = box.querySelector('[data-shelf-act="fold"][data-field="' + kind + '"]');
+    // 量 section 而不是标题行：标题是吸顶的，滚过头以后它的矩形永远停在上边界，
+    // 看不出该补多少；section 不吸顶，位置就是它在整列里的真实去处
+    var sec = btn && btn.closest('.shelf-sec');
+    if (!sec) return;
+    // section 自己的分隔线和第一组的 8px 上内边距都在标题之上，把它们算进去才是
+    // 标题本该待的位置；不然拉回来的结果永远是差一条线的高度、贴不到上边界
+    var cs = getComputedStyle(sec);
+    var head = sec.getBoundingClientRect().top +
+      (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.paddingTop) || 0);
+    var d = head - box.getBoundingClientRect().top;
+    if (d >= 0) return;
+    box.scrollTop += d;
+    // 滚动位置是代码改的，不会等到下一帧的 scroll 回调才重算底色
+    syncShelfPins();
   }
 
   // ---------------------------------------------------------------- 搜索（推荐 / 匹配 / 记录）
@@ -1836,12 +1880,35 @@
   }
 
   /**
-   * 没有 ISBN 的书（豆瓣书单条目、旧的手动书目）：先在上图书目里找同名版本。
-   * 只有一个版本就补上 ISBN 接着查；多个把选择器交给结果区；一个都没有就明说。
+   * 豆瓣书单条目没带 ISBN 时，让服务端现抓一次详情页补上。
+   * 后台补 ISBN 是 1 秒一本的慢通道，点开的那本常常还没轮到；
+   * 每本只问一次（「重新查询」时再问），补不到就退回按书名找同名版本。
+   * 记住的是 promise 而不是结果：同一本同时被问两次时共用一次请求。
+   */
+  var isbnTried = {};
+
+  function fetchIsbnFor(book, retry) {
+    if (!book || !book.url || book.isbn) return Promise.resolve('');
+    var prev = isbnTried[book.url];
+    if (prev && !retry) return prev;
+    if (S.cfg && S.cfg.features && !S.cfg.features.isbn) return Promise.resolve('');
+    var p = apiGet('/api/isbn?url=' + encodeURIComponent(book.url), 30000)
+      .then(function (j) {
+        var v = compactIsbn(j && j.isbn);
+        if (v) book.isbn = v;
+        return v;
+      })
+      .catch(function () { return ''; });
+    isbnTried[book.url] = p;
+    return p;
+  }
+
+  /**
+   * 没有 ISBN 的书再按书名找同名版本：只有一个版本就补上 ISBN 接着查；
+   * 多个把选择器交给结果区；一个都没有就明说。
    * 返回 true 表示可以继续查馆藏，false 表示结果区已经画好空态或版本选择器。
    */
-  function resolveBookVersion(book, id, t0, fail, refresh) {
-    if (book.isbn) return Promise.resolve(true);
+  function resolveByTitle(book, id, t0, fail, refresh) {
     if (!book.title) {
       fail(new Error('这本书没有 ISBN，也没有书名'));
       return Promise.resolve(false);
@@ -1875,6 +1942,18 @@
     }, function (e) {
       fail(new Error('没查到版本信息：' + (e.message || '上图没响应')));
       return false;
+    });
+  }
+
+  /**
+   * 没有 ISBN 的书（豆瓣书单条目、旧的手动书目）：先向服务端要豆瓣详情页的 ISBN。
+   * 有 ISBN 就直接按 ISBN 查，精确且快；拿不到才走按书名找同名版本那条老路
+   * （也是它的兜底：豆瓣详情页也读不到时，用户仍能按书名查到书）。
+   */
+  function resolveBookVersion(book, id, t0, fail, refresh) {
+    if (book.isbn) return Promise.resolve(true);
+    return fetchIsbnFor(book, refresh).then(function (isbn) {
+      return isbn ? true : resolveByTitle(book, id, t0, fail, refresh);
     });
   }
 
@@ -3907,6 +3986,9 @@
     // 别把窄屏下的临时收起当成用户已经做过选择
     var mv0 = lsGet('shlib.map');
     syncMapSeg(mv0 === null ? window.innerWidth > NARROW_W : mv0 !== '0', false);
+    // 内容区上次停在哪就还停在哪，重开面板会接着读半截；回到最上面
+    var sm = $('settings').querySelector('.set-main');
+    if (sm) sm.scrollTop = 0;
     $('settings').classList.add('show');
     $('settings').setAttribute('aria-hidden', 'false');
     loadLanInfo();
@@ -4342,6 +4424,18 @@
     measureHeader();
     if (window.ResizeObserver && $('bar')) {
       try { new ResizeObserver(measureHeader).observe($('bar')); } catch (e) {}
+    }
+    // 吸顶那条实底跟着滚动走：一帧最多算一次。
+    // 书单高度变了（收/放整列、换窗口尺寸）也要重算，不然重开后 .pin 还停在旧位置
+    if ($('bookList')) {
+      var pinRaf = 0;
+      $('bookList').addEventListener('scroll', function () {
+        if (pinRaf) return;
+        pinRaf = requestAnimationFrame(function () { pinRaf = 0; syncShelfPins(); });
+      }, { passive: true });
+      if (window.ResizeObserver) {
+        try { new ResizeObserver(syncShelfPins).observe($('bookList')); } catch (e) {}
+      }
     }
     // 书架整体是重画的，事件挂在 #bookList 上做委托：
     // 行内 × = 移出手动书；组标题上的动作 = 加书 / 改地址 / 重读；其余点行 = 切书

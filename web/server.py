@@ -384,6 +384,15 @@ DOULIST_RE = re.compile(r'^https?://(?:www\.)?douban\.com/doulist/(\d+)', re.I)
 # 别把电影列表抓进来当书查。
 WISH_RE = re.compile(r'^https?://book\.douban\.com/people/([^/?#]+)/wish(?:[/?#]|$)', re.I)
 WISH_MOVIE_RE = re.compile(r'^https?://(?:www|movie)\.douban\.com/people/([^/?#]+)/wish', re.I)
+# /api/isbn 只认图书条目这一种地址：按 subject id 重新拼 URL 再去抓，
+# 不然这个接口就成了「随便什么网址都能让本地服务去取一遍」的代理
+SUBJECT_URL_RE = re.compile(r'^https?://book\.douban\.com/subject/(\d+)/?(?:[?#].*)?$', re.I)
+SUBJECT_URL = 'https://book.douban.com/subject/%s/'
+
+
+def _subject_id(raw):
+    m = SUBJECT_URL_RE.match((raw or '').strip())
+    return m.group(1) if m else ''
 
 
 def list_kind_of(raw):
@@ -681,6 +690,32 @@ def fetch_isbn(subject_url):
         return ''
 
 
+def isbn_for_subject(raw_url):
+    """查询时现补一本豆瓣条目的 ISBN，返回 (响应体, 状态码)。
+
+    书单列表页有的书不带 ISBN（详情页才有），后台线程 1 秒补一本，用户点开的那本
+    往往还没轮到，只好退回按书名找同名版本——繁体/简体书名对不上时会误报
+    「上图没有这一版」。这里给单本开条快捷通道：先看书单缓存，没有再抓一次详情页，
+    抓到的写回缓存。
+    """
+    sid = _subject_id(raw_url)
+    if not sid:
+        return {'error': 'url 要是豆瓣图书条目地址'}, 400
+    hit = _cached_isbn(sid)
+    if hit:
+        return {'isbn': hit}, 200
+    try:
+        isbn = fetch_isbn(SUBJECT_URL % sid)
+    except DoubanBlocked as e:
+        return {'error': str(e), 'blockedFor': e.retry_after}, 502
+    if isbn:
+        try:
+            _remember_isbn(sid, isbn)
+        except Exception:
+            pass
+    return {'isbn': isbn}, 200
+
+
 def fetch_editions(term, by_isbn=False):
     """按书名（或 ISBN）列出上图可查的版本，每条都带 ISBN。
 
@@ -946,6 +981,29 @@ def _write_doulist_entry(url, entry, merge=False):
     latest[url] = entry
     atomic_write_json(DOULIST_CACHE, latest, indent=1)
     return entry
+
+
+def _cached_isbn(sid):
+    """书单缓存里这本的 ISBN。后台补 ISBN 是 1 秒/本，用户点开的这本可能还没轮到。"""
+    for entry in _read_doulist_cache().values():
+        for b in (entry or {}).get('books') or []:
+            if b.get('isbn') and _subject_id(b.get('url')) == sid:
+                return b['isbn']
+    return ''
+
+
+def _remember_isbn(sid, isbn):
+    """把现抓到的 ISBN 写回所有含有这本书的书单，后台线程和下次打开都不用重抓。"""
+    with DOULIST_LOCK:
+        latest = _read_doulist_cache()
+        changed = False
+        for entry in latest.values():
+            for b in (entry or {}).get('books') or []:
+                if not b.get('isbn') and _subject_id(b.get('url')) == sid:
+                    b['isbn'] = isbn
+                    changed = True
+        if changed:
+            atomic_write_json(DOULIST_CACHE, latest, indent=1)
 
 
 def _isbn_worker(url):
@@ -1624,6 +1682,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json(update_peek())
         if path == '/api/editions':
             return self.api_editions()
+        if path == '/api/isbn':
+            payload, code = isbn_for_subject(self.query().get('url', ''))
+            return self.json(payload, code)
         if path == '/api/cover':
             return self.api_cover()
         if path == '/api/geocode':
@@ -1780,6 +1841,7 @@ class Handler(SimpleHTTPRequestHandler):
             'features': {
                 'cycling': bool(amap_key(cfg)),
                 'editions': True,
+                'isbn': True,
             },
             # 开关的值和「本次进程实际有没有监听局域网」是两回事：拨完开关就地换监听地址
             # （见 apply_lan_binding），所以正常情况下这两个值一保存就一致；

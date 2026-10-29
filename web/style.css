@@ -25,6 +25,11 @@
      --panel 的 .66 会把封面颜色透上来，字都读不清，所以单独浓一档 */
   --panel-pop: rgba(255, 255, 255, .97);
   --panel-solid: #fbfcfe;          /* 不支持 backdrop-filter 时的回退底 */
+  /* 书架吸顶那条的底色：得跟书单面板当时的玻璃底一模一样，否则一吸住就「变一块」。
+     面板是半透明的，底色由身后那三团环境光决定，所以这支不是 --panel-solid，
+     而是照面板实际显出来的颜色取样（单列布局书单顶得更低，见下方 861 断点）。
+     另：新铺一层玻璃没用——底下是滚动的书行，透出来就看得见字 */
+  --shelf-head: #fafcfe;
   --chip: rgba(20, 44, 68, .055);
   --hover: rgba(20, 44, 68, .05);
   --hover-2: rgba(20, 44, 68, .09);
@@ -83,6 +88,7 @@ html[data-theme="dark"] {
   --panel-2: rgba(38, 44, 52, .5);
   --panel-pop: rgba(30, 35, 42, .97);
   --panel-solid: #1c2026;
+  --shelf-head: #191e25;
   --chip: rgba(255, 255, 255, .07);
   --hover: rgba(255, 255, 255, .06);
   --hover-2: rgba(255, 255, 255, .1);
@@ -694,20 +700,62 @@ main.aside-min #aside { padding-top: 0; }
   scrollbar-gutter: stable;
   flex: 1;
   min-height: 0;
-  padding: 8px;
+  /* 顶部不留内边距：组标题要吸顶（见 .shelf-grp），滚动容器顶上留白会在它上方
+     露出一条滚过去的书行。第一组的 8px 由 .shelf-sec:first-child 补 */
+  padding: 0 8px 8px;
 }
+
+/* 每组左右各负出 .booklist 的 8px 内边距、再用同量内边距补回：
+   组与组之间那条分隔线才能通栏，书行位置一寸不动 */
+.shelf-sec { margin: 0 -8px; padding: 0 8px; }
+/* 三组标题长得一样，组间不画线整列就是一条连着读下去的书行流。
+   线跟标题下沿那条同宽（也通栏），上下两处才是一套 */
+.shelf-sec + .shelf-sec { margin-top: 10px; border-top: 1px solid var(--line); }
+/* 前一组收起了：它下沿那条线就是这组的尾，顶上那条不再画，两组也不再留空档——
+   收起来的几组挨成一张紧凑的索引；两条线隔 10px 并排，看着像多画了一行。
+   紧凑只从这里省，折叠态的标题行自身尺寸跟展开一寸相同（见 .shelf-grp 的 10/4）：
+   以前给它另配过一对 8/8 想让线落在两条组名正中，结果同一行按下去高度 38 变 40，
+   组名往上挪 2px、下沿那条线往下掉 2px，而鼠标就停在这行上——点一下收起，
+   标题和线一起抖 */
+.shelf-sec.folded + .shelf-sec { margin-top: 0; border-top: 0; }
+.shelf-sec:first-child { padding-top: 8px; }
 
 /* 书架分组：手动添加 / 豆瓣书单。来源写在组标题上，行内不再重复「豆瓣/手动」 */
 .shelf-grp {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 8px 4px;
+  /* 通栏：左右各负出 .booklist 的 8 内边距、再补 16 的内边距，
+     吸顶那条才能贴着面板两边，同时文字和右侧箭头的横向位置一寸不动 */
+  margin: 0 -8px;
+  padding: 10px 16px 4px;
   font-size: 11px;
   line-height: 1.4;
+  /* 吸顶：长书单滚到中间时组标题跟到顶上，收起不用先滚回顶部。
+     每组自己是一层 section，标题钉到本组末尾就被下一组顶走 */
+  position: sticky;
+  top: 0;
+  z-index: 3;
   color: var(--ink-3);
+  /* 下沿一条线：标题和书行之间有个收口，三组才各是一条有头有尾的条。
+     不铺底色——铺了就是一块跟玻璃面板对不上的实色（见下） */
+  box-shadow: 0 1px 0 var(--line);
 }
-.shelf-grp:first-child { padding-top: 2px; }
+/* 只有书行真滚到标题底下时才铺实底（.pin 由 app.js 按滚动位置加）。
+   常铺的话标题那块比玻璃面板亮一截——浅色差 12 级、暗色差 6 级，静止时就是两块
+   对不上的色块；换成半透明或磨砂也不行，底下的书名会透上来。
+   颜色取 --shelf-head 而不是 --panel-solid：后者是回退用的白/灰实色，
+   桌面下面板正压在左上那团蓝光上，差得出十来级 */
+.shelf-grp.pin {
+  background: var(--shelf-head);
+}
+/* 桌面（>860，跟单列断点对齐）：书单顶就贴在头部下面，整个列表顶落在环境光的蓝斑里，
+   面板显出来是偏蓝的浅色；单列时书单顶往下挪了一百多像素，蓝斑已经淡掉，接近实色。
+   两种布局各取各的取样值，吸顶那条才跟面板看不出接缝 */
+@media (min-width: 861px) {
+  :root { --shelf-head: #f1f8fe; }
+  html[data-theme="dark"] { --shelf-head: #19222c; }
+}
 .sgrp-ico {
   display: inline-flex;
   align-items: center;
@@ -719,12 +767,12 @@ main.aside-min #aside { padding-top: 0; }
 .sgrp-ico .dblogo { width: 14px; height: 14px; }
 .sgrp-name { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
 .sgrp-n { font-variant-numeric: tabular-nums; }
-/* 组标题右侧的动作图标（改豆瓣书单地址）：给一枚 28×22 的扁盒子当悬停区。
-   不给尺寸的话 hover 底色正好等于 16px 图标本身，竖着一条、比例怪，也像不可点 */
+/* 组标题右侧的收起箭头：纯图标按钮一律正圆，跟顶栏圆钮、行内「移除」同一种悬停形状；
+   24 见方给足悬停区，否则 hover 底色正好等于图标本身 */
 .shelf-grp button.icon-btn {
-  width: 28px;
-  height: 22px;
-  border-radius: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
   color: var(--ink-3);
 }
 .shelf-grp button.icon-btn .ic { width: 15px; height: 15px; }
@@ -773,12 +821,17 @@ main.aside-min #aside { padding-top: 0; }
 .shelf-empty p { margin: 0; font-size: 12px; }
 .se-acts { display: flex; gap: 6px; margin-top: 2px; }
 
+/* 通栏行：左右各负出 .shelf-sec 的 8 内边距，悬停底色铺到面板两边，跟上面组标题的
+   分隔线、右侧结果区的一行同宽。内边距同量补成 16，文字和封面横向位置一寸不动
+   （16 + 1px 透明边 = 原来的 8 + 8 + 1）。
+   以前是缩进 8px 的圆角块，一列里只有它自己带圆角，看着像嵌进去的卡片 */
 .book {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
   gap: 9px;
-  padding: 7px 8px;
-  border-radius: var(--r-md);
+  margin: 0 -8px;
+  padding: 7px 16px;
+  border-radius: 0;
   cursor: pointer;
   border: 1px solid transparent;
   align-items: start;
@@ -788,18 +841,14 @@ main.aside-min #aside { padding-top: 0; }
 /* 书架是整块重画的（renderBooks），重画那一帧先不走背景过渡：
    否则指针底下那本书会从透明淡到 hover 色，一次加载重画几次就闪几次（见 app.js） */
 #bookList.no-anim .book, #bookList.no-anim .bk-x { transition: none; }
-/* 选中态用全站「把它拿起来」那块语言：分段控件的滑块就是一块 --seg-thumb 底
-   + --thumb-shadow 凸起，书架选中的书照画。以前是 brand-soft 底 + brand-line 描边，
-   读着像 hover 没走干净；品牌色也留给真正可点的链接，不用来标选中
-   （2026-10-26 用户定 A3）。
-   浅色下 --seg-thumb 跟玻璃面板只差 1–3 个 RGB 级，阴影又只往下落，
-   上沿和背景几乎分不开；加一圈 --line-strong 的头发线把选中卡「拎」出来。
-   暗色 --seg-thumb (#343a44) 跟面板 (#2a2f38) 差得够，hairline 也照画，
-   不影响暗色观感——同一条规则、两种主题都成立 */
+/* 选中态：通栏之后没有圆角包边了，原先那块 --seg-thumb 滑块底在浅色下跟玻璃面板
+   只差 1–3 个 RGB 级，撑起对比的那圈 hairline 又会在面板两边被裁掉半截。
+   改成比 hover 深一档的中性底：同一套「浮起来」的读法，一列里不再有半截描边。
+   品牌色仍只留给可点的链接，不用来标选中（2026-10-26 用户定 A3） */
 .book.active {
-  background: var(--seg-thumb);
+  background: var(--hover-2);
   border-color: transparent;
-  box-shadow: var(--thumb-shadow), 0 0 0 1px var(--line-strong);
+  box-shadow: none;
 }
 /* 手动加的书：右侧多一列放「移除」。以前左侧还画了一道品牌色竖线标来源，
    撤掉了——分组标题「手动添加」和这颗「移除」已经把来源说过两遍，
@@ -818,7 +867,8 @@ main.aside-min #aside { padding-top: 0; }
   margin-top: -1px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  /* 跟组标题的收起箭头、顶栏圆钮同一种悬停形状：纯图标按钮都是正圆 */
+  border-radius: 50%;
   background: transparent;
   color: var(--ink-3);
   opacity: .45;
@@ -828,6 +878,8 @@ main.aside-min #aside { padding-top: 0; }
 }
 .book:hover .bk-x, .bk-x:focus-visible { opacity: 1; }
 .bk-x:hover { background: var(--hover-2); color: var(--ink); }
+/* 选中行本身的底就是 --hover-2，移除钮再铺同一层等于没铺；换 --chip 叠上去才看得出来 */
+.book.active .bk-x:hover { background: var(--chip); }
 .bk-x .ic { width: 14px; height: 14px; }
 .book .cover {
   width: 38px; height: 54px; object-fit: cover; border-radius: 4px;
@@ -871,7 +923,7 @@ main.aside-min #aside { padding-top: 0; }
 /* 印章：参考闲鱼「卖掉了」那枚邮戳——斜着盖、白描边、双线框。
    封面只有 38px 宽，波浪邮戳线放不下，省掉；印章宽度收在「封面 38 + 缝隙 9」以内，
    右侧不伸进书名（书名是主信息，盖住一个字就漏了一个字），左侧出头落在 .book 的
-   8px 内边距里，.booklist 的 overflow 裁不到。进场做成「盖下去」：从大收到正常 + 淡入 */
+   内边距里，.booklist 的 overflow 裁不到。进场做成「盖下去」：从大收到正常 + 淡入 */
 /* 印章不绑 .book：书架里所有 38px 封面共用这一套，结果页封面已不再挂借阅状态 */
 .cov .stamp {
   position: absolute;
@@ -2153,8 +2205,12 @@ button.icon-btn.on:hover:not(:disabled) {
   border-radius: var(--r-lg);
   width: min(560px, 100%);
   max-height: 88vh;
-  overflow-y: auto;
-  padding: 20px 24px 16px;
+  /* 面板本身不整块滚：标题钉在顶上、底部「关闭 / 保存」钉在底下，中间 .set-main 自己滚。
+     以前跟着内容一起滚，窗口一矮保存钮就被推到看不见的地方，想保存得先滚过全部设置 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0 0;
   box-shadow: var(--shadow-float);
   position: relative;
   /* 开合动效：从略缩小 + 下沉淡入；.show 时归位 */
@@ -2164,7 +2220,8 @@ button.icon-btn.on:hover:not(:disabled) {
 }
 .settings.show .box { transform: none; opacity: 1; }
 html[data-theme="dark"] .settings .box { background: rgba(24, 28, 34, .92); }
-.settings h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+/* 标题不滚，左右留白自己给（内容区和底部按钮各给各的），三处左沿才对得齐 */
+.settings h2 { margin: 0 24px 4px; font-size: 16px; font-weight: 600; }
 /* 右上角 X：点一下关设置。和底部「关闭 / 保存」是两套入口，给鼠标和触屏都留一手。
    用两条交叉线画 X（绝对定位到 30px 圆心），比文字 × 字形更对称、视觉绝对居中；
    hover 给圆形背景 + 阴影 */
@@ -2207,7 +2264,13 @@ html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0
   letter-spacing: .4px;
   color: var(--ink-3);
 }
-.settings h2 + .grp { margin-top: 6px; border-top: 0; padding-top: 0; }
+/* 面板中间那段：只有它在滚，左右留白跟标题、底部按钮对齐 */
+.set-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px 8px;
+}
 /* 别的设备只读说明：不是错误，底色和左沿那条线负责点出位置，正文走常规层级 */
 .note.ro {
   margin: 0 0 8px;
@@ -2334,14 +2397,15 @@ html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0
 .row > button { flex: none; height: var(--ctl); padding: 0 16px; font-size: 14px; }
 .mt { margin-top: 8px; }
 
-/* 底部按钮：整块面板现在一屏放得下（说明都删了），所以照常排在最后；
-   窗口特别矮时面板自己滚，按钮跟着滚到最下面就行 */
+/* 底部按钮：钉在面板下沿、不随内容滚走；上面一道细线把滚动区收口，
+   滚到一半也看得出内容是从线下过去的 */
 .settings .foot {
   display: flex;
+  flex: none;
   gap: 8px;
   justify-content: flex-end;
-  margin-top: 12px;
-  padding-top: 8px;
+  padding: 12px 24px 16px;
+  border-top: 1px solid var(--line);
 }
 
 /* 版本号 + 右侧按钮组：检查更新常驻，重启服务只在回环地址上出现（服务端也只接受
@@ -2684,8 +2748,12 @@ html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
     width: 100%;
     max-height: 90vh;
     border-radius: var(--r-lg) var(--r-lg) 0 0;
-    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    padding: 16px 0 0;
   }
+  .settings h2 { margin: 0 16px 4px; }
+  .set-main { padding: 0 16px 8px; }
+  /* 底部按钮让开 iPhone 的手势条 */
+  .settings .foot { padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
   /* 地址对话框跟设置面板同一个手机形态：底部升起 */
   .dlg { padding: 0; align-items: flex-end; }
   .dlg .dlg-box {

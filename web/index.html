@@ -110,121 +110,126 @@
       <h2 id="settingsTitle">设置</h2>
       <button class="x" id="setClose" type="button" aria-label="关闭设置"></button>
 
-    <!-- 局域网只读：从其他设备打开时能查书，但写配置会被服务端拒绝，这里提前说清楚 -->
-    <div class="note ro" id="setRo" hidden>
-      在其他设备上打开时，设置是只读的：可以查书、查看结果；改设置请回到运行服务的那台电脑。
-    </div>
+    <!-- 中间这段自己滚：标题和底部「关闭 / 保存」钉住不动，滚多远都按得到保存 -->
+    <div class="set-main">
 
-    <!-- 1 地图：宽屏下结果区背后铺不铺地图。手机上地图不铺背景，这项主要给桌面用 -->
-    <div class="grp">地图</div>
-
-    <div class="field">
-      <label>默认展开地图</label>
-      <div class="seg" id="mapSeg">
-        <span class="seg-thumb" aria-hidden="true"></span>
-        <button type="button" data-map-val="1">展开</button>
-        <button type="button" data-map-val="0">收起</button>
+      <!-- 局域网只读：从其他设备打开时能查书，但写配置会被服务端拒绝，这里提前说清楚 -->
+      <div class="note ro" id="setRo" hidden>
+        在其他设备上打开时，设置是只读的：可以查书、查看结果；改设置请回到运行服务的那台电脑。
       </div>
-    </div>
 
-    <!-- 2 豆瓣地址：豆列和想读可以只填一个，也可以都填 -->
-    <div class="grp">豆瓣地址</div>
+      <!-- 1 地图：宽屏下结果区背后铺不铺地图。手机上地图不铺背景，这项主要给桌面用 -->
+      <div class="grp">地图</div>
 
-    <div class="field">
-      <label for="setDoulist">豆列网址</label>
-      <input id="setDoulist" placeholder="https://www.douban.com/doulist/xxxx/">
-    </div>
-
-    <div class="field last">
-      <label for="setWish">想读网址</label>
-      <input id="setWish" placeholder="https://book.douban.com/people/你的ID/wish">
-    </div>
-
-    <!-- 3 地图 API Key -->
-    <div class="grp">地图 API Key</div>
-
-    <div class="keybox">
       <div class="field">
-        <!-- 两把 Key 的名字以前叫「Web 服务」/「Web 端」，中文里分不出来，提示里还常被统
-             统称成「地图 Key」，结果距离/骑行缺的是 Web 服务那把、人却去填地图那格。
-             label 改成按用途说，一把管地址换算和骑行，一把管浏览器画地图 -->
-        <label for="providerBtn">地址与距离（Web 服务 Key）</label>
-        <div class="row">
-          <div class="select w-narrow" id="providerSelect">
-            <input type="hidden" id="setProvider" value="amap">
-            <button type="button" class="select-btn" id="providerBtn"
-                    aria-haspopup="listbox" aria-expanded="false" aria-controls="providerMenu">
-              <span id="providerVal">高德</span>
-              <i data-icon="chevron-down"></i>
-            </button>
-            <div class="select-menu" id="providerMenu" role="listbox" aria-label="地址与距离的服务商" hidden>
-              <button type="button" class="select-opt" role="option" data-v="amap"
-                      aria-selected="true" tabindex="-1">
-                <span>高德</span><i data-icon="check"></i>
-              </button>
-              <button type="button" class="select-opt" role="option" data-v="qq"
-                      aria-selected="false" tabindex="-1">
-                <span>腾讯</span><i data-icon="check"></i>
-              </button>
-            </div>
-          </div>
-          <input id="setKey" type="password" autocomplete="off" placeholder="Key">
-          <button class="sm" type="button" id="keyTest">测试</button>
+        <label>默认展开地图</label>
+        <div class="seg" id="mapSeg">
+          <span class="seg-thumb" aria-hidden="true"></span>
+          <button type="button" data-map-val="1">展开</button>
+          <button type="button" data-map-val="0">收起</button>
         </div>
+      </div>
+
+      <!-- 2 豆瓣地址：豆列和想读可以只填一个，也可以都填 -->
+      <div class="grp">豆瓣地址</div>
+
+      <div class="field">
+        <label for="setDoulist">豆列网址</label>
+        <input id="setDoulist" placeholder="https://www.douban.com/doulist/xxxx/">
       </div>
 
       <div class="field last">
-        <label for="setMapKey">地图背景（Web 端 JS API Key）</label>
-        <input id="setMapKey" type="password" autocomplete="off" placeholder="Key">
-        <input id="setMapSec" type="password" autocomplete="off"
-               placeholder="安全密钥" class="mt">
+        <label for="setWish">想读网址</label>
+        <input id="setWish" placeholder="https://book.douban.com/people/你的ID/wish">
       </div>
-    </div>
 
-    <!-- 4 从其他设备访问：默认关，开启后同一网络里的手机 / 另一台电脑能打开（只读） -->
-    <div class="grp">从其他设备访问</div>
+      <!-- 3 地图 API Key -->
+      <div class="grp">地图 API Key</div>
 
-    <div class="field last" id="lanField">
-      <div class="lan-switch">
-        <div class="lan-switch-txt">
-          <label id="lanLabel">让同一网络里的其他设备打开</label>
-          <div class="stat" id="lanStat">未开启，只有这台电脑能访问</div>
+      <div class="keybox">
+        <div class="field">
+          <!-- 两把 Key 的名字以前叫「Web 服务」/「Web 端」，中文里分不出来，提示里还常被统
+               统称成「地图 Key」，结果距离/骑行缺的是 Web 服务那把、人却去填地图那格。
+               label 改成按用途说，一把管地址换算和骑行，一把管浏览器画地图 -->
+          <label for="providerBtn">地址与距离（Web 服务 Key）</label>
+          <div class="row">
+            <div class="select w-narrow" id="providerSelect">
+              <input type="hidden" id="setProvider" value="amap">
+              <button type="button" class="select-btn" id="providerBtn"
+                      aria-haspopup="listbox" aria-expanded="false" aria-controls="providerMenu">
+                <span id="providerVal">高德</span>
+                <i data-icon="chevron-down"></i>
+              </button>
+              <div class="select-menu" id="providerMenu" role="listbox" aria-label="地址与距离的服务商" hidden>
+                <button type="button" class="select-opt" role="option" data-v="amap"
+                        aria-selected="true" tabindex="-1">
+                  <span>高德</span><i data-icon="check"></i>
+                </button>
+                <button type="button" class="select-opt" role="option" data-v="qq"
+                        aria-selected="false" tabindex="-1">
+                  <span>腾讯</span><i data-icon="check"></i>
+                </button>
+              </div>
+            </div>
+            <input id="setKey" type="password" autocomplete="off" placeholder="Key">
+            <button class="sm" type="button" id="keyTest">测试</button>
+          </div>
         </div>
-        <button type="button" class="tgl" id="lanToggle" aria-pressed="false"
-                aria-labelledby="lanLabel">
-          <span class="tgl-track"><span class="tgl-knob"></span></span>
-        </button>
-      </div>
-      <!-- 开关保存即生效：服务收到保存请求会当场换监听地址（server.py 的 apply_lan_binding），
-           所以这里不再有「要不要重启」那条问句 -->
-      <div class="lan-row" id="lanShare" hidden>
-        <div id="lanQr" class="lan-qr" hidden></div>
-        <div class="lan-txt">
-          <div id="lanUrl" class="lan-url">—</div>
-          <div class="lan-note" id="lanRo" hidden>其他设备上只能查看：可以查书、查看结果；修改设置请回到这台电脑。</div>
+
+        <div class="field last">
+          <label for="setMapKey">地图背景（Web 端 JS API Key）</label>
+          <input id="setMapKey" type="password" autocomplete="off" placeholder="Key">
+          <input id="setMapSec" type="password" autocomplete="off"
+                 placeholder="安全密钥" class="mt">
         </div>
       </div>
-      <div class="lan-note" id="lanHint">其他设备要和这台电脑在同一个网络里；手机就是连同一个 Wi-Fi。</div>
-    </div>
 
-    <!-- 5 关于 -->
-    <div class="grp">关于</div>
+      <!-- 4 从其他设备访问：默认关，开启后同一网络里的手机 / 另一台电脑能打开（只读） -->
+      <div class="grp">从其他设备访问</div>
 
-    <div class="about-row">
-      <div class="about-id">
-        <a class="icon-btn about-gh" id="homeLink" href="https://github.com/Giant-Apple/shlib-finder"
-           target="_blank" rel="noopener noreferrer"
-           title="GitHub 项目主页" aria-label="GitHub 项目主页"><i data-icon="github"></i></a>
-        <div class="ver" id="setVer">上图馆藏查询 v—</div>
+      <div class="field last" id="lanField">
+        <div class="lan-switch">
+          <div class="lan-switch-txt">
+            <label id="lanLabel">让同一网络里的其他设备打开</label>
+            <div class="stat" id="lanStat">未开启，只有这台电脑能访问</div>
+          </div>
+          <button type="button" class="tgl" id="lanToggle" aria-pressed="false"
+                  aria-labelledby="lanLabel">
+            <span class="tgl-track"><span class="tgl-knob"></span></span>
+          </button>
+        </div>
+        <!-- 开关保存即生效：服务收到保存请求会当场换监听地址（server.py 的 apply_lan_binding），
+             所以这里不再有「要不要重启」那条问句 -->
+        <div class="lan-row" id="lanShare" hidden>
+          <div id="lanQr" class="lan-qr" hidden></div>
+          <div class="lan-txt">
+            <div id="lanUrl" class="lan-url">—</div>
+            <div class="lan-note" id="lanRo" hidden>其他设备上只能查看：可以查书、查看结果；修改设置请回到这台电脑。</div>
+          </div>
+        </div>
+        <div class="lan-note" id="lanHint">其他设备要和这台电脑在同一个网络里；手机就是连同一个 Wi-Fi。</div>
       </div>
-      <div class="about-acts">
-        <!-- 检查更新只查版本号，不下载、不安装；检测本身只在点这一下时发生。
-             结果直接写在按钮上（已是最新 / 新版本 x.y.z / 检查失败），不另占一行；
-             查到新版时按钮报出号数并高亮，点击打开 GitHub 发布页 -->
-        <button class="sm" type="button" id="checkUpdate">检查更新</button>
-        <button class="sm" type="button" id="restartSrv" hidden
-                title="重启本地服务，让 server.py / version.json 的改动生效">重启服务</button>
+
+      <!-- 5 关于 -->
+      <div class="grp">关于</div>
+
+      <div class="about-row">
+        <div class="about-id">
+          <a class="icon-btn about-gh" id="homeLink" href="https://github.com/Giant-Apple/shlib-finder"
+             target="_blank" rel="noopener noreferrer"
+             title="GitHub 项目主页" aria-label="GitHub 项目主页"><i data-icon="github"></i></a>
+          <div class="ver" id="setVer">上图馆藏查询 v—</div>
+        </div>
+        <div class="about-acts">
+          <!-- 检查更新只查版本号，不下载、不安装；检测本身只在点这一下时发生。
+               结果直接写在按钮上（已是最新 / 新版本 x.y.z / 检查失败），不另占一行；
+               查到新版时按钮报出号数并高亮，点击打开 GitHub 发布页 -->
+          <button class="sm" type="button" id="checkUpdate">检查更新</button>
+          <button class="sm" type="button" id="restartSrv" hidden
+                  title="重启本地服务，让 server.py / version.json 的改动生效">重启服务</button>
+        </div>
       </div>
+
     </div>
 
     <div class="foot">
