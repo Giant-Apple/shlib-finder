@@ -16,6 +16,11 @@ runtime/
 _bak*.png
 _bak*.json
 
+# Extension: the self-test page and whatever the browser generates inside the
+# source folder. Neither belongs in the repo or in the store package.
+ext/dev/
+ext/_metadata/
+
 # Interpreter artefacts
 __pycache__/
 *.py[cod]

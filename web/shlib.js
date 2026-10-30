@@ -124,20 +124,21 @@
   }
 
   /**
-   * 借阅类型分类。上图 AjaxTab 里实际出现的四种（2026-10 实测）：
-   *   General loan materials            → general   普通外借，可借走
-   *   Children's loan materials         → children  少儿外借，可借走
-   *   Reference Circulation Collection  → reference 参考外借，限馆内
-   *   Preserved Collection              → preserved 保存本，限馆内阅览
-   * 没标类型的按普通外借算（老数据别全丢了），其余进 other。
+   * 借阅类型分类。同一字段的上图取值跟着请求语言走（2026-10 实测，中英各一套）：
+   *   普通外借资料 / General loan materials            → general   普通外借，可借走
+   *   少儿外借资料 / Children's loan materials         → children  少儿外借，可借走
+   *   参考外借资料 / Reference Circulation Collection  → reference 参考外借，限馆内
+   *   保存资料     / Preserved Collection              → preserved 保存本，限馆内阅览
+   *   仅供阅览资料 / 处理中                            → other     不外借
+   * 判断顺序：先排掉「保存 / 参考 / 少儿」，再看普通外借，剩下的（含没标类型）一律 other，
+   * 不进可借数，只进库室和索书号。
    */
   function loanKind(loanType) {
     var s = String(loanType || '');
-    if (/preserved/i.test(s)) return 'preserved';
-    if (/reference/i.test(s)) return 'reference';
-    if (/children/i.test(s)) return 'children';
-    if (/loan/i.test(s)) return 'general';
-    // 没标类型的按 other 算（不进可借数，但进库室和索书号），别当 general 误算成可外借
+    if (/保存|preserved/i.test(s)) return 'preserved';
+    if (/参考外借|reference/i.test(s)) return 'reference';
+    if (/少儿|children/i.test(s)) return 'children';
+    if (/普通外借|loan/i.test(s)) return 'general';
     return 'other';
   }
 
@@ -165,11 +166,13 @@
    * 里面每个 <div class="location-item"> 是一个库室，h3 给库室名，
    * 再里面每行 <tr class="holding-available|holding-unavailable"> 是一个复本。
    */
-  // 「在架」状态词白名单：英文 "Available"，中文界面是「在架/可借」
-  var AVAIL_RE = /^(available|在架|可借)/i;
+  // 「在架」状态词白名单：英文 "Available"，中文界面是「在架/可借/已归还」。
+  // 2026-10 实测：上图对能借走的复本一律写「已归还」（上一笔动作是归还，书已在架），
+  // 真正还在流转路上的会额外带「(流转中，查看实时状态)」后缀，靠后缀区分。
+  var AVAIL_RE = /^(available|在架|可借|已归还)/i;
   // 名义上"没借出去"、但此刻也不在架上的状态，一律不算可借：
-  // 已归还刚归还还在流转路上、待取书车、在途调拨、破损、遗失
-  var NOT_ON_SHELF_RE = /(已归还|流转中|在途|调拨|待取|in transit|recently returned|awaiting pickup|in process|damaged|missing|lost)/i;
+  // 归还后还在流转路上、待取书车、在途调拨、破损、遗失
+  var NOT_ON_SHELF_RE = /(流转中|在途|调拨|待取|in transit|recently returned|awaiting pickup|in process|damaged|missing|lost)/i;
 
   /**
    * 带结构诊断。除了 items，还要回答一个问题：
