@@ -162,17 +162,21 @@
 
   /* ---------------------------------------------------------------- 上手 */
 
-  .start-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
-  .start-card {
+  .start-list { display: grid; gap: 14px; }
+  .end-row {
+    display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 34px;
+    align-items: center;
     background: var(--card); border: 1px solid var(--line); border-radius: 18px;
-    padding: 24px 26px;
+    padding: 22px 26px;
   }
-  .start-card .tag {
+  .end-k { display: flex; align-items: center; gap: 8px; }
+  .end-k .ico { display: block; width: 18px; height: 18px; flex: none; }
+  .end-k .tag {
     display: inline-block; font-size: 12px; font-weight: 650; color: var(--brand);
     background: var(--brand-soft); border-radius: 999px; padding: 3px 10px;
-    margin-bottom: 14px; align-self: flex-start;
   }
-  .start-card h3 { margin: 0 0 16px; font-size: 18px; font-weight: 680; }
+  .end-l h3 { margin: 10px 0 0; font-size: 18px; font-weight: 680; }
+  .end-note { margin: 6px 0 0; font-size: 12.5px; color: var(--ink-3); }
   .steps { list-style: none; counter-reset: step; margin: 0; padding: 0; display: grid; gap: 12px; }
   .steps li {
     counter-increment: step; display: flex; gap: 12px;
@@ -186,29 +190,14 @@
     display: inline-flex; align-items: center; justify-content: center;
   }
   .steps b { color: var(--ink); font-weight: 620; }
+  .steps.inline3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
   pre {
     margin: 4px 0 14px; padding: 18px 20px; overflow-x: auto;
     background: #102a36; color: #dff0f6; border-radius: 14px;
     font-family: var(--mono); font-size: 12.5px; line-height: 1.75;
     white-space: pre; overflow-wrap: normal;
   }
-
-  .alt-card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
-    padding: 24px 26px;
-  }
-  .alt-card .tag {
-    display: inline-block; font-size: 12px; font-weight: 650; color: var(--brand);
-    background: var(--brand-soft); border-radius: 999px; padding: 3px 10px;
-    margin-bottom: 14px;
-  }
-  .alt-card h3 { margin: 0 0 16px; font-size: 18px; font-weight: 680; }
-  .alt-card pre { margin: 0; }
-  .alt-card .foot { margin: 8px 0 0; font-size: 13px; color: var(--ink-3); }
-
-  .start-more { margin: 18px 0 0; font-size: 14.5px; color: var(--ink-2); }
-  .start-more a { color: var(--brand); font-weight: 620; text-decoration: none; }
-  .start-more a:hover { text-decoration: underline; }
+  .end-row pre { margin: 0; }
 
   /* ---------------------------------------------------------------- FAQ */
 
@@ -245,15 +234,20 @@
 
   /* ---------------------------------------------------------------- 响应式 */
 
-  @media (max-width: 1080px) and (min-width: 981px) {
-    .alt-card pre { font-size: 12px; }
+  @media (max-width: 1160px) {
+    .steps.inline3 { grid-template-columns: 1fr; gap: 12px; }
+  }
+
+  @media (max-width: 1080px) {
+    .end-row { grid-template-columns: 200px minmax(0, 1fr); gap: 24px; }
   }
 
   @media (max-width: 980px) {
     .hero { padding-top: 50px; }
     .hero-grid { grid-template-columns: 1fr; gap: 32px; }
     .band { padding: 54px 0; }
-    .start-pair { grid-template-columns: 1fr; gap: 16px; }
+    .end-row { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 20px 22px; }
+    .steps.inline3 { grid-template-columns: 1fr; gap: 12px; }
   }
 
   @media (max-width: 720px) {
@@ -354,30 +348,56 @@
       <div class="sec-head">
         <span class="kicker">快速开始</span>
         <h2>三分钟，从下载到第一本书</h2>
-        <p>Windows 用免安装版；macOS / Linux 用源码，需要 Python 3.9 或更新。</p>
+        <p>Windows 免安装；macOS / Linux 走源码；浏览器插件不用装程序。</p>
       </div>
 
-      <div class="start-pair">
-        <div class="start-card">
-          <span class="tag">Windows · 推荐</span>
-          <h3>免安装，解压就能用</h3>
-          <ol class="steps">
-            <li><span>打开 <a href="https://github.com/Giant-Apple/shlib-finder/releases/latest" target="_blank" rel="noopener noreferrer">下载页</a>，下载最新的 zip 压缩包。</span></li>
+      <div class="start-list">
+        <div class="end-row">
+          <div class="end-l">
+            <span class="end-k">
+              <img class="ico" src="brand/windows.svg" alt="" width="18" height="18">
+              <span class="tag">Windows · 推荐</span>
+            </span>
+            <h3>免安装，解压就能用</h3>
+          </div>
+          <ol class="steps inline3">
+            <li><span>打开 <a href="https://github.com/Giant-Apple/shlib-finder/releases/latest" target="_blank" rel="noopener noreferrer">下载页</a>，下载最新 zip。</span></li>
             <li><span>解压，双击 <b>start-server.bat</b>。</span></li>
-            <li><span>浏览器会自动打开查询页面。</span></li>
+            <li><span>浏览器自动打开查询页面。</span></li>
           </ol>
         </div>
 
-        <div class="alt-card">
-          <span class="tag">macOS / Linux · 源码</span>
-          <h3>一行命令跑起来</h3>
+        <div class="end-row">
+          <div class="end-l">
+            <span class="end-k">
+              <img class="ico" src="brand/apple.svg" alt="" width="18" height="18">
+              <img class="ico" src="brand/linux.svg" alt="" width="18" height="18">
+              <span class="tag">macOS / Linux · 源码</span>
+            </span>
+            <h3>一行命令跑起来</h3>
+            <p class="end-note">需要 Python 3.9 或更新</p>
+          </div>
 <pre><code>git clone https://github.com/Giant-Apple/shlib-finder.git
 cd shlib-finder
 ./start-server.sh</code></pre>
         </div>
-      </div>
 
-      <p class="start-more">不想装程序？<a href="https://microsoftedge.microsoft.com/addons/detail/%E4%B8%8A%E5%9B%BE%E9%A6%86%E8%97%8F%E6%9F%A5%E8%AF%A2/kpdbanjmlkfdaebckkjojfbaheojmjok" target="_blank" rel="noopener noreferrer">装 Edge 侧边栏插件</a>，直接在豆瓣图书页看馆藏。</p>
+        <div class="end-row">
+          <div class="end-l">
+            <span class="end-k">
+              <img class="ico" src="brand/edge.svg" alt="" width="18" height="18">
+              <span class="tag">浏览器 · Edge</span>
+            </span>
+            <h3>不用装程序</h3>
+            <p class="end-note">没有书架、书单和地图</p>
+          </div>
+          <ol class="steps inline3">
+            <li><span>打开 <a href="https://microsoftedge.microsoft.com/addons/detail/%E4%B8%8A%E5%9B%BE%E9%A6%86%E8%97%8F%E6%9F%A5%E8%AF%A2/kpdbanjmlkfdaebckkjojfbaheojmjok" target="_blank" rel="noopener noreferrer">Edge 加载项</a>，点「获取」。</span></li>
+            <li><span>工具栏点书本图标打开侧边栏。</span></li>
+            <li><span>豆瓣图书页看馆藏与可借。</span></li>
+          </ol>
+        </div>
+      </div>
     </div>
   </section>
 
