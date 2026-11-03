@@ -65,6 +65,23 @@
   // 馆藏接口给的是显示名，两套都要能对上
   var POOL = [];
 
+  // 不能当评分对象的网点：两个汇总节点（淮海路+东馆+网借中心、少儿馆长风+南西+蜜宝），
+  // 网借/分拣这种没有固定馆舍的节点，以及少儿馆的 24 小时自助还书点。
+  // 自助借还亭、自助借阅室仍可评分——那是一处具体的馆。
+  var NO_RATE_IDS = {
+    'sl-main': 1,
+    'sst-main': 1,
+    '402b99b4-4c65-4fa0-99d8-6d86f3f92a49': 1,   // 上海图书馆享借中心（网借）
+    '3cdde0ca-acf3-4e7a-8c01-3e780bd4ce7f': 1,   // 中心馆分拣处
+    '5eaf6919-6199-411a-8892-e6ccc250c575': 1,   // 杨浦区网借图书馆
+    'd389969e-a412-4e8f-8b36-ed3e1e028d00': 1,   // 少儿馆-蜜宝云书房
+    'd87e23b1-1ac2-458a-a79a-fdd00b2909a3': 1    // 少儿馆（24 小时自助还书）
+  };
+
+  function isRateable(id) {
+    return !!id && !NO_RATE_IDS[id];
+  }
+
   function setVenues(list) {
     var venues = list || [];
     POOL = [];
@@ -324,6 +341,9 @@
       // 那种情况仍是「开馆时间未知」，不能冒充成假期待确认。
       var holidayUnknown = !!h.specialClosed;
       return {
+        // 馆的稳定 id：评分按它记，不按会改的馆名
+        id: v.id || '',
+        rateable: isRateable(v.id),
         name: b.name,
         display: v.d || b.name,
         address: v.a || '',
@@ -567,6 +587,7 @@
   return {
     setVenues: setVenues,
     matchLocation: matchLocation,
+    isRateable: isRateable,
     haversine: haversine,
     formatDistance: formatDistance,
     wgs84ToGcj02: wgs84ToGcj02,

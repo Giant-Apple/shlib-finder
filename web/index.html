@@ -135,12 +135,25 @@
 
       <div class="field">
         <label for="setDoulist">豆列网址</label>
-        <input id="setDoulist" placeholder="https://www.douban.com/doulist/xxxx/">
+        <div class="row">
+          <input id="setDoulist" placeholder="https://www.douban.com/doulist/xxxx/">
+          <!-- 地址没改也想重读时用：先存这一节的地址，再跳过缓存重新抓豆瓣 -->
+          <button type="button" class="sm icon-btn" id="doulistRefresh"
+                  title="重新读取豆瓣数据（先保存这一节的地址）" aria-label="重新读取豆列">
+            <i data-icon="refresh"></i>
+          </button>
+        </div>
       </div>
 
       <div class="field last">
         <label for="setWish">想读网址</label>
-        <input id="setWish" placeholder="https://book.douban.com/people/你的ID/wish">
+        <div class="row">
+          <input id="setWish" placeholder="https://book.douban.com/people/你的ID/wish">
+          <button type="button" class="sm icon-btn" id="wishRefresh"
+                  title="重新读取豆瓣数据（先保存这一节的地址）" aria-label="重新读取想读">
+            <i data-icon="refresh"></i>
+          </button>
+        </div>
       </div>
 
       <!-- 3 地图 API Key -->
@@ -221,11 +234,15 @@
           <div class="ver" id="setVer">上图馆藏查询 v—</div>
         </div>
         <div class="about-acts">
+          <!-- 反馈入口直接开 GitHub Issues：本地版没有账号体系，也不收集任何反馈数据 -->
+          <a class="about-fb" href="https://github.com/Giant-Apple/shlib-finder/issues"
+             target="_blank" rel="noopener noreferrer"
+             title="反馈问题或建议（GitHub Issues）">问题反馈</a>
           <!-- 检查更新只查版本号，不下载、不安装；检测本身只在点这一下时发生。
                结果直接写在按钮上（已是最新 / 新版本 x.y.z / 检查失败），不另占一行；
                查到新版时按钮报出号数并高亮，点击打开 GitHub 发布页 -->
           <button class="sm" type="button" id="checkUpdate">检查更新</button>
-          <button class="sm" type="button" id="restartSrv" hidden
+          <button class="sm warn" type="button" id="restartSrv" hidden
                   title="重启本地服务，让 server.py / version.json 的改动生效">重启服务</button>
         </div>
       </div>

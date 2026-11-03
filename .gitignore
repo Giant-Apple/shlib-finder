@@ -21,6 +21,11 @@ _bak*.json
 ext/dev/
 ext/_metadata/
 
+# Node (wrangler lives in cloud/, which is private anyway)
+node_modules/
+# wrangler's local dev state (D1/KV copies)
+.wrangler/
+
 # Interpreter artefacts
 __pycache__/
 *.py[cod]

@@ -12,11 +12,11 @@
   var CACHE_TTL = 5 * 60 * 1000;
   var SHOW_LIMIT = 30;
   // 上图版本查询（/api/editions）在页面内的缓存时长。服务端还有 24 小时检索缓存、
-  // 30 天书目缓存，这里只是别让切书/改输入时反复发请求
+  // 30 天书目缓存，这里只是别让搜索联想每敲一个字就发一次请求
   var ED_TTL = 10 * 60 * 1000;
-  // 书架后台逐本查版本时的并发：服务端一次检索内部已经开 4 个线程拉 RIS，
-  // 页面上再压到 2 路，别让整架书同时涌向上图
-  var ED_CONC = 2;
+  // 豆瓣版本清单（/api/versions）在页面内的缓存时长。服务端另有一层 30 天落盘缓存，
+  // 这一层只挡重绘：切回同一本书、改筛选、换位置都不该再打一趟
+  var VER_TTL = 24 * 60 * 60 * 1000;
 
   /**
    * 图标：全部取 Lucide（lucide-static v1.59.0，ISC 许可）的官方 path，
@@ -121,7 +121,10 @@
     'corner-down-left': '<path d="M20 4v7a4 4 0 0 1-4 4H4" /> <path d="m9 10-5 5 5 5" />',
     // 外链：跳到上图原始页面用（结果页标题旁那枚 ↗）
     'external-link': '<path d="M15 3h6v6" /> <path d="M10 14 21 3" /> ' +
-      '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />'
+      '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />',
+    // 馆评分的只读标记（本地版只画这一枚，可点的版本在扩展里）
+    'thumbs-up': '<path d="M7 10v12" /> <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 ' +
+      '17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />'
   };
 
   // 生成一个图标。<i> 是 Lucide 的线描风格：不填充、描边走 currentColor。
@@ -177,6 +180,7 @@
     activeId: null,
     spot: null,
     filter: 'avail',
+    q: '',           // 结果内筛选：只按馆名，切书时清空
     results: {},     // id -> {places, meta}
     cache: {},       // id -> {at, payload}
     busy: {},        // id -> true
@@ -189,15 +193,19 @@
     spotRecenter: false, // 用户刚点过定位：下一次画地图要以「我」为中心（见 drawMap）
     asideMin: false,  // 书架列是否收起（收起后留一条竖 rail 当入口，记在 localStorage）
     // 上图版本查询（/api/editions）的内存缓存：键是 't:<书名>' 或 'i:<isbn>'，
-    // 值 { at, data, busy, err }。搜索联想、手动加书、书架的后台预热、结果页其他版本共用一份
+    // 值 { at, data, busy, err }。只服务搜索联想与「只输书名加书」那条候选列表
     editions: {},
-    verQueued: {},    // 已经排进后台版本检查的检索键，避免同一本书反复排队
+    // 豆瓣版本清单（/api/versions）的内存缓存：键是条目 id 或 ISBN，
+    // 值 { at, data, busy, err }。结果页那一行「本书其他版本」读它
+    vers: {},
     // 渐进披露的两处展开态（都不落盘，刷新即回收）：
     //   versOpen: 书 id -> 是否展开「本书其他版本」列表（默认收起，只留一行「N 个」）
     //   footOpen: 馆名 -> 是否展开卡片第三行（索书号 / 库室）
     versOpen: {},
     footOpen: {},
-    lanInfo: null     // /api/lan-qr 的最近结果：设置面板的开关和二维码都按它画
+    lanInfo: null,    // /api/lan-qr 的最近结果：设置面板的开关和二维码都按它画
+    // 馆评分：云端聚合快照。ok=false 时整块不画（读不到就不暗示有这项数据）
+    ratings: { ok: false, libs: {}, at: 0 }
   };
 
   // ---------------------------------------------------------------- 工具
@@ -308,44 +316,6 @@
     return null;
   }
 
-  // 书架里的每一本都要做「本书其他版本」检查：结果只进 editions 缓存，书架行不显示它。
-  // 提前查是为了点开那一本时版本列表立刻出来，而不是先转一圈。两路并发，同一检索词只排一次。
-  // 查不到就安静留着——结果页要么列出其他版本，要么整块不出现
-  var verPaintTimer = null;
-  function scheduleBooksPaint() {
-    if (verPaintTimer) return;
-    verPaintTimer = setTimeout(function () {
-      verPaintTimer = null;
-      renderBooks();
-    }, 200);
-  }
-
-  function checkShelfVersions() {
-    var todo = [];
-    allBooks().forEach(function (b) {
-      if (!b || !b.title) return;
-      var key = editionKey(b.title, false);
-      var st = S.editions[key];
-      if (st && (st.busy || (st.data && Date.now() - st.at < ED_TTL))) return;
-      if (S.verQueued[key]) return;
-      S.verQueued[key] = true;
-      todo.push(b);
-    });
-    if (!todo.length) return;
-    var i = 0;
-    function next() {
-      if (i >= todo.length) return;
-      var b = todo[i++];
-      fetchEditions(b.title).then(function () {
-        // 预热到版本数据就顺手补一次出版社/年份：这一趟本来就为每本书跑，
-        // 缺什么在这补，不用等到点开这本书
-        if (!b.publisher || !b.year) enrichFromEditions(b);
-        scheduleBooksPaint();
-      }).catch(function () {}).then(next);
-    }
-    for (var k = 0; k < ED_CONC; k++) next();
-  }
-
   // 在「手动添加」里加一本并选中。已经有同一本就切过去，不重复添加。
   // 返回 { book, existed } 方便调用方决定要不要提示
   function addBookToShelf(book) {
@@ -358,7 +328,6 @@
     delete S.cache[book.id];
     delete S.results[book.id];
     selectBook(book.id);
-    checkShelfVersions();
     return { book: book, existed: false };
   }
 
@@ -417,6 +386,58 @@
     });
   }
 
+  // ------------------------------------------------------------ 豆瓣版本清单
+  //
+  // 「本书其他版本」只认豆瓣详情页那个「这本书的其他版本」区块，上图接口不参与
+  // （保留上图的唯一一处是「只输书名加书」的候选列表，走上面的 fetchEditions）。
+  // 认书优先用条目 id，没有才用 ISBN——ISBN 那路由服务端 301 到条目页再认一次。
+  function verRefOf(book) {
+    var id = String((book && (book.subjectId || book.id)) || '');
+    if (/^\d{1,12}$/.test(id)) return id;
+    return compactIsbn(book && book.isbn);
+  }
+
+  function fetchVersions(book, force) {
+    var ref = verRefOf(book);
+    if (!ref) return Promise.reject(new Error('这本书没有条目号，也没有 ISBN'));
+    var cur = S.vers[ref];
+    if (!force && cur && cur.busy && cur.p) return cur.p;
+    if (!force && cur && cur.data && Date.now() - cur.at < VER_TTL) return Promise.resolve(cur.data);
+    // 旧服务端没这个接口：整行不出现是预期行为，但原因得留在控制台里找得到
+    if (S.cfg && S.cfg.features && !S.cfg.features.versions) {
+      return Promise.reject(new Error('本地服务是旧进程，版本清单要重启服务'));
+    }
+    var st = { at: cur ? cur.at : 0, data: cur && cur.data, busy: true, err: '', p: null };
+    st.p = apiGet('/api/versions?book=' + encodeURIComponent(ref), 30000)
+      .then(function (d) {
+        st.at = Date.now();
+        st.data = d;
+        st.busy = false;
+        st.p = null;
+        return d;
+      }).catch(function (e) {
+        st.busy = false;
+        st.err = e.message || '读取失败';
+        st.p = null;
+        throw e;
+      });
+    S.vers[ref] = st;
+    return st.p;
+  }
+
+  // 版本清单顺带补一次这一版的出版社/年份（读的是条目页 #info）。
+  // 以前这一补靠整架后台预热，现在改成「点开哪本补哪本」——缺的字段在结果页就地补齐，
+  // 书架那一行的出版信息也一起重绘
+  function applyImprint(book, imprint) {
+    if (!book || !imprint) return;
+    var changed = false;
+    if (imprint.publisher && !book.publisher) { book.publisher = imprint.publisher; changed = true; }
+    if (imprint.year && !book.year) { book.year = imprint.year; changed = true; }
+    if (!changed) return;
+    if (book.adhoc) saveManual();
+    renderBooks();
+  }
+
   function applyEdition(book, e) {
     if (!book || !e) return;
     // 上图记录的题名是「正题名 = 并列题名」，作者是编目格式（中英文名各一遍）。整段套上去
@@ -453,11 +474,11 @@
     return r;
   }
 
-  // 缺出版社/年份、或者书名还是那串 ISBN 的书：从版本数据里补一次。
+  // 刚按 ISBN 加进来的书（书名还只是那串数字）：从上图 RIS 把题名/出版社/年份补上。
   // 老写法在请求在途时直接 return（if (st && st.busy) return;），跳过的那一次没人再补，
-  // 于是《小团圆》那一行永远空着——虽然本地缓存里它的每个版本都带着出版社和年份。
+  // 于是那一行永远空着——虽然缓存里它的每个版本都带着出版社和年份。
   // 现在挂在同一个在途 promise 上（fetchEditions 会复用，不会多打一次），数据一到就补。
-  // 手动加的书顺带落盘；豆瓣书单每次重抓，改内存里的对象就够渲染。
+  // 手动加的书顺带落盘。
   function enrichFromEditions(book) {
     if (!book || !(book.isbn || book.title)) return;
     var titleIsCode = !book.title ||
@@ -496,11 +517,13 @@
   }
 
   // 出版社那一栏的文案：有就写「出版社 年份」，补不到才明说「出版信息不详」。
-  // 后台那次版本查询还在路上时先留白——这会儿还不知道到底缺不缺，闪一句假的缺失更坑
+  // 版本清单还在路上时先留白——这会儿还不知道到底缺不缺，闪一句假的缺失更坑。
+  // 认不出条目号也没有 ISBN 的书同样留白：压根没处查，说「不详」是把它没查过写成查过没有
   function imprintText(book) {
     if (book.publisher) return esc(book.publisher) + (book.year ? ' ' + esc(book.year) : '');
     if (book.year) return esc(book.year);
-    var st = S.editions[editionKey(book.isbn || book.title, !!book.isbn)];
+    var ref = verRefOf(book);
+    var st = ref ? S.vers[ref] : null;
     if (!st || st.busy) return '';
     return '出版信息不详';
   }
@@ -771,7 +794,7 @@
   // 正常本机运行时行为完全不变。
 
   var LS_KEYS = ['shlib.spot', 'shlib.map', 'shlib.aside', 'shlib.theme', 'shlib.hist',
-    'shlib.covtips', 'shlib.addrs', 'shlib.shelf', 'shlib.groups'];
+    'shlib.covtips', 'shlib.addrs', 'shlib.shelf', 'shlib.groups', 'shlib.ratings'];
 
   function lsGet(k) {
     if (S.nostore) return null;
@@ -788,6 +811,64 @@
     try {
       for (var i = 0; i < LS_KEYS.length; i++) localStorage.removeItem(LS_KEYS[i]);
     } catch (e) {}
+  }
+
+  // ---------------------------------------------------------------- 馆评分
+  //
+  // 「赞 / 不喜欢」是用户对一家馆的喜爱程度，和具体哪本书无关。
+  // 读的是云端每 10 分钟重建一次的聚合快照：只含净额 ≥2、且至少 2 台设备赞过的馆。
+  // 本地工具只读，不提交；请求失败或快照为空都当「这次没有标记」，不报错也不占位置。
+  // workers.dev 是临时域名，国内直连打不通；换成正式域名时只改这一行。
+
+  var RATINGS_URL = 'https://shlib-ratings.giantapple.workers.dev/v1/ratings.json';
+  var RATINGS_KEY = 'shlib.ratings';
+  var RATINGS_CACHE_MAX = 24 * 3600 * 1000;
+
+  function readRatingsCache() {
+    try {
+      var j = JSON.parse(lsGet(RATINGS_KEY) || 'null');
+      if (j && j.ok && j.libs && Date.now() - (j.at || 0) < RATINGS_CACHE_MAX) return j;
+    } catch (e) {}
+    return null;
+  }
+
+  function loadRatings() {
+    var hit = readRatingsCache();
+    if (hit) S.ratings = hit;
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 5000);
+    fetch(RATINGS_URL, { signal: ctrl.signal }).then(function (r) {
+      clearTimeout(timer);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (j) {
+      if (!j || !j.libs) throw new Error('bad payload');
+      S.ratings = { ok: true, libs: j.libs, at: Date.now() };
+      lsSet(RATINGS_KEY, JSON.stringify(S.ratings));
+      paintRatings();
+    }).catch(function () {
+      clearTimeout(timer);
+      // 读不到就沿用上次成功的结果（最多 24 小时）；一次都没成功过就整块不画
+    });
+  }
+
+  // 快照通常在馆藏回来之前就到了；晚到时补一次重绘，滚动位置不动
+  function paintRatings() {
+    if (!S.activeId || !S.results[S.activeId]) return;
+    var list = document.querySelector('.res-list');
+    var top = list ? list.scrollTop : 0;
+    renderResult();
+    var next = document.querySelector('.res-list');
+    if (next) next.scrollTop = top;
+  }
+
+  // 本地版只读：只有数字，没有按钮。没有数字的馆什么都不画
+  function voteHTML(p) {
+    if (!S.ratings.ok || !p.rateable) return '';
+    var n = Number((S.ratings.libs[p.id] || {}).n);
+    if (!(n > 0)) return '';
+    return '<span class="vote ro"><span class="vote-btn up" title="赞">' +
+      icon('thumbs-up') + '<span class="cnt">' + n + '</span></span></span>';
   }
 
   // ---------------------------------------------------------------- 位置
@@ -1097,16 +1178,20 @@
       st.complete = j.complete !== false;
       st.truncated = !!j.truncated;
       st.blockedFor = j.blockedFor || 0;
-      st.warn = st.blockedFor > 0
-        ? '豆瓣暂时限制了访问，约 ' +
-          Math.max(1, Math.ceil(st.blockedFor / 60)) +
-          ' 分钟后可再试。下面是上次抓到的' + noun + '。'
-        : '';
+      // 被限制时拿回的还是上次那批：分钟数不报（那是我们自己那道冷却的剩余值，
+      // 不是豆瓣给的时间），toast 说一句、列表末尾留一行小字，见 listGroup
+      st.warn = '';
+      if (st.blockedFor > 0) toast('豆瓣暂时限制了访问，过一会儿再试试', 'err');
     }).catch(function (e) {
       st.loading = false;
       st.more = false;
       st.blockedFor = e.blockedFor || 0;
-      if (more && st.books.length) {
+      if (st.blockedFor > 0) {
+        // 冷却里发的请求在服务端就被挡下，不会再往上打：书和上次一样，
+        // 只留列表末尾那一行小字，不叠一句「读取失败」
+        st.err = '';
+        st.warn = '';
+      } else if (more && st.books.length) {
         // 继续加载失败：已经载入的书不动，只说这一批没拿到
         st.err = '';
         st.warn = (e.message || '读取失败') +
@@ -1115,11 +1200,10 @@
         st.err = e.message || '读取失败';
         st.warn = '';
       }
-      toast('豆瓣' + noun + '读取失败：' + e.message, 'err');
+      toast(st.blockedFor > 0 ? '豆瓣暂时限制了访问，过一会儿再试试'
+                              : '豆瓣' + noun + '读取失败：' + e.message, 'err');
     }).then(function () {
       renderBooks();
-      // 版本检查在书目稳定之后跑：刚打开页面、刚换完地址、刚加载下一批都算
-      checkShelfVersions();
       // 当前选中的书还在架上（手动加的、或任一份列表里还有它）就留着；
       // 否则挑第一本。刷新列表不应该把正在看的那本冲掉
       if (!findBook(S.activeId)) {
@@ -1223,7 +1307,10 @@
   // 在意它的唯一时刻是点开这本书之后——那时候结果页书名下面就是版本列表。
   function bookRowHTML(b) {
     var sub = joinSep([b.author ? esc(b.author) : '', imprintText(b)].filter(Boolean));
-    var isbn = b.isbn ? '<div class="isbn"><span>ISBN ' + esc(b.isbn) + '</span></div>' : '';
+    // 还没有 ISBN、但这一本正在查（补 ISBN 的请求只在查它时发出）：先占一条 ISBN 的位置，
+    // 补到的那一帧整行不会往下长；补不到时占位跟着 busy 一起撤，不留空条
+    var isbn = b.isbn ? '<div class="isbn"><span>ISBN ' + esc(b.isbn) + '</span></div>'
+      : (isbnPending(b) ? '<div class="isbn"><i class="skel"></i></div>' : '');
     var st = bookState(b);
     var x = b.adhoc
       ? '<button type="button" class="bk-x" data-shelf-remove="' + esc(b.id) + '" ' +
@@ -1291,23 +1378,28 @@
       // 收起后组内所有内容都不画：书、加载/错误提示、继续加载、重复说明
       if (S.folded[kind]) { html += '<section class="shelf-sec folded">' + g + '</section>'; return; }
 
+      // 状态条的位置：这一组有书就接在列表末尾——「刷新」「继续加载」都在那儿，
+      // 点完不必把滚动条拉回顶部才看得见；一本都没抓到才挂在组头下面
+      var note = '';
       if (st.loading) {
-        g += '<div class="shelf-note"><span class="spin"></span> 正在读豆瓣' + noun + '…</div>';
+        note = '<div class="shelf-note"><span class="spin"></span> 正在读豆瓣' + noun + '…</div>';
       } else if (st.err) {
-        // 读取失败时旧列表还在：提示挂在上面，列表不撤，别让人以为书全丢了
-        g += '<div class="shelf-note err">' + esc(st.err) +
+        // 读取失败时旧列表还在：列表不撤，只把「这一批没拿到」说在书旁边
+        note = '<div class="shelf-note err">' + esc(st.err) +
           ' <button type="button" class="linkish" data-shelf-act="refresh" data-field="' + kind +
           '">重试</button></div>';
       } else if (st.warn) {
-        // 豆瓣拦截但旧列表还在：书继续用，只把「为什么不是最新的」说清楚
-        g += '<div class="shelf-note err">' + esc(st.warn) + '</div>';
+        note = '<div class="shelf-note err">' + esc(st.warn) + '</div>';
       } else if (st.empty) {
-        g += '<div class="shelf-note">尚未设置豆瓣' + noun + '。' +
+        note = '<div class="shelf-note">尚未设置豆瓣' + noun + '。' +
           '<button type="button" class="linkish" data-shelf-act="edit" data-field="' + kind +
           '">去设置</button></div>';
       }
+      var noteAtEnd = note && books.length;
+      if (!noteAtEnd) g += note;
       if (books.length) {
         g += books.map(bookRowHTML).join('');
+        if (noteAtEnd) g += note;
         // 长列表分批抓：抓完一批先显示，下一批由用户点「继续加载」触发；
         // 冷却中不给按钮，点下去也只会拿回同一句提示
         if (st.more) {
@@ -1318,6 +1410,9 @@
           g += '<div class="shelf-more">已载入 ' + books.length + ' 本。' +
             '<button type="button" class="linkish" data-shelf-act="more" data-field="' + kind +
             '">继续加载</button></div>';
+        }
+        if (st.blockedFor && !st.loading && !st.more) {
+          g += '<div class="shelf-more">豆瓣暂时限制了访问，这份是上次抓到的。</div>';
         }
       }
       if (dupNote) g += '<div class="shelf-more">' + dupNote + '</div>';
@@ -1797,6 +1892,8 @@
   function selectBook(id) {
     S.activeId = id;
     S.showAll = false;
+    // 馆藏筛选是上一本书的范围词，换书就清掉：留着会让新书直接空列表
+    S.q = '';
     // 视野不跨书沿用：S.mapView 本来是给「切筛选别乱跳」用的，但切书也命中 keep 的话，
     // 上一本拖到浦东、下一本馆藏全在松江，地图停在原地一个标记都看不见，也不会自动框回来
     S.mapView = null;
@@ -1886,6 +1983,13 @@
    * 记住的是 promise 而不是结果：同一本同时被问两次时共用一次请求。
    */
   var isbnTried = {};
+
+  // 这一本会不会在后台补出 ISBN：还没有、有豆瓣条目链接（补得动）、正在查它，
+  // 而且服务端这个接口是开着的。书架行的占位条只在这四个条件都成立时画
+  function isbnPending(b) {
+    if (!b || b.isbn || !b.url || !S.busy[b.id]) return false;
+    return !(S.cfg && S.cfg.features && !S.cfg.features.isbn);
+  }
 
   function fetchIsbnFor(book, retry) {
     if (!book || !book.url || book.isbn) return Promise.resolve('');
@@ -2091,14 +2195,14 @@
     }
     $('result').innerHTML = '<div class="result-inner">' + headHTML(book) +
       '<div class="loading-row"><span class="spin"></span> 正在查上图（逐册核对，约 2-6 秒）…</div></div>';
-    ensureEditions(book);
+    ensureVersions(book);
   }
 
-  // ---------------------------------------------------------------- 其他版本（上图书目）
+  // ---------------------------------------------------------------- 其他版本（豆瓣区块）
   //
-  // 「本书其他版本」的数据来自上图书目 RIS（/api/editions），不是豆瓣：
-  // 每条都带 ISBN，点一下就能按 ISBN 查馆藏。版本放在书名下面；
-  // 搜索联想、手动加书、书架行内的版本数共用同一份缓存。
+  // 「本书其他版本」的数据只来自豆瓣详情页的「这本书的其他版本」区块：
+  // 区块给的那几条逐条打开、从版本页 #info 取 ISBN，所以每条都能按版本查馆藏。
+  // 上图接口不参与这一行（它按书名检索，条数和豆瓣对不上）。
 
   // 豆瓣图标：有条目 id 就跳条目页；手动加的书没有 subjectId，用 ISBN 走
   // https://book.douban.com/isbn/<isbn>/（实测 301 到条目页）
@@ -2109,15 +2213,26 @@
     return isbn ? 'https://book.douban.com/isbn/' + isbn + '/' : '';
   }
 
+  // 展开列表末尾那条「全部 N 个版本」：N 和地址都取自区块标题里那条 /works/ 链接，不多发一次请求。
+  // 豆瓣的 N 是含当前这一版的版本总数，屏幕上已经有「列出的这几条 + 当前」，
+  // 所以要比 +1 才说明「还有没列出来的」——一共 3 个版本、列了 2 条时不再冒「全部 3 个版本」
+  function worksLinkHTML(data, shown) {
+    var w = data && data.works;
+    if (!w || !w.url || !(w.total > shown + 1)) return '';
+    return '<a class="linkish db-vers-all" href="' + esc(w.url) + '"' +
+      ' target="_blank" rel="noopener noreferrer"' +
+      ' title="在豆瓣打开这本书的版本总表">全部 ' + esc(String(w.total)) + ' 个版本</a>';
+  }
+
   function versionsHTML(book, data) {
     var cur = compactIsbn(book.isbn);
     var list = ((data && data.editions) || []).filter(function (e) {
-      return e.same && e.isbn && compactIsbn(e.isbn) !== cur;
+      return e.isbn && compactIsbn(e.isbn) !== cur;
     });
     // 没有其他版本就整块不出现：一行「没有查到其他版本」不回答问题，只是占位
     if (!list.length) return '';
-    // 折叠是默认态：九行版本把真正的答案（哪家馆能借）推出首屏，而绝大多数查询
-    // 只要当前这一版。收起时只留一行「本书其他版本 N 个」，点了才列
+    // 折叠是默认态：几行版本把真正的答案（哪家馆能借）推出首屏，而绝大多数查询
+    // 只要当前这一版。收起时只留一枚胶囊，全量入口跟着列表走，点开才看得见
     var open = !!S.versOpen[book.id];
     var head = '<button type="button" class="db-vers-head' + (open ? ' open' : '') + '"' +
       ' data-db-act="ver-toggle" aria-expanded="' + (open ? 'true' : 'false') + '">' +
@@ -2130,8 +2245,8 @@
       var pub = [e.publisher, e.year].filter(Boolean).join(' ');
       return '<button type="button" class="db-ver" data-db-act="isbn"' +
         ' data-isbn="' + esc(isbn) + '"' +
-        ' data-title="' + esc(e.title || book.title) + '"' +
-        ' data-author="' + esc(e.author || '') + '"' +
+        ' data-title="' + esc(book.title) + '"' +
+        ' data-author="' + esc(book.author || '') + '"' +
         ' data-pub="' + esc(e.publisher || '') + '"' +
         ' data-year="' + esc(e.year || '') + '"' +
         ' title="按 ISBN ' + esc(isbn) + ' 查上图馆藏">' +
@@ -2140,38 +2255,44 @@
         '<span class="dbv-isbn">ISBN ' + esc(isbn) + '</span></span>' +
         '<span class="dbv-go">查馆藏</span></button>';
     }).join('');
-    return head + '<div class="db-vers-rows">' + rows + '</div>';
+    // 末尾那条链跳的是豆瓣，跟上面每一行（把这一版加进书架查上图）不是一件事，
+    // 所以不加边框不画底色，别被读成「第五个版本」
+    return head + '<div class="db-vers-rows">' + rows + worksLinkHTML(data, list.length) + '</div>';
   }
 
   function paintVersions(book) {
     if (!book || book.id !== S.activeId) return;
     var slot = $('dbVersSlot');
     if (!slot) return;
-    var st = S.editions[editionKey(book.title, false)];
-    if (st && st.data) {
-      slot.innerHTML = versionsHTML(book, st.data);
+    var ref = verRefOf(book);
+    var st = ref ? S.vers[ref] : null;
+    // 请求已经发出、还没回来：先占一颗和收起态那颗胶囊同高的占位，
+    // 不然版本到货时整块结果卡往下长一截
+    if (st && st.busy && !st.data) {
+      slot.innerHTML = '<div class="db-vers-head skel-head"><i class="skel"></i></div>';
       return;
     }
-    if (st && st.err) {
-      slot.innerHTML = '<div class="db-vers-note">其他版本查询失败：' + esc(st.err) +
-        ' <button type="button" class="linkish" data-db-act="ver-retry">重试</button></div>';
-      return;
-    }
-    // 还没查出来：先什么都不画。多数书架条目启动时已经查过，这里留空只是几十毫秒；
-    // 画一枚转圈反而会给「其实没有版本」的书闪出一条无关信息
-    slot.innerHTML = '';
+    // 没读到就什么都不画：这一行的规矩是「读到至少一条才出现」。
+    // 没这个区块、被豆瓣挡下、那几条都没标 ISBN——都不占位置，原因只在控制台里
+    slot.innerHTML = (st && st.data) ? versionsHTML(book, st.data) : '';
   }
 
-  function ensureEditions(book) {
-    if (!book || !book.title) return;
+  function ensureVersions(book) {
+    if (!book) return;
     paintVersions(book);
-    var key = editionKey(book.title, false);
-    var st = S.editions[key];
-    // 失败过就不再自动重试：结果页会留一条「重试」，别让每次重绘都去打上图
-    if (st && (st.busy || st.err || (st.data && Date.now() - st.at < ED_TTL))) return;
-    fetchEditions(book.title).then(function () {
+    var ref = verRefOf(book);
+    if (!ref) return;
+    var st = S.vers[ref];
+    // 失败过就不再自动重试：整行不出现就是最终结果，别让每次重绘都去打豆瓣
+    if (st && (st.busy || st.err || (st.data && Date.now() - st.at < VER_TTL))) return;
+    // fetchVersions 是同步把 busy 挂上的，所以它一返回就再画一次——占位条要在这几秒里看得见
+    var p = fetchVersions(book);
+    paintVersions(book);
+    p.then(function (d) {
+      applyImprint(book, d && d.imprint);
       paintVersions(findBook(book.id) || book);
-    }).catch(function () {
+    }).catch(function (e) {
+      console.warn('本书其他版本没读到：' + ((e && e.message) || e));
       paintVersions(findBook(book.id) || book);
     });
   }
@@ -2316,6 +2437,10 @@
           S.onlyOpen = false;
           S.showAll = false;
           renderResult();
+        } else if (act === 'clear-q') {
+          S.q = '';
+          S.showAll = false;
+          renderResult();
         } else if (act === 'requery') {
           requeryActive();
         } else if (act === 'call') {
@@ -2378,18 +2503,28 @@
         }) +
         '</div>';
       bindEmptyEvents();
-      ensureEditions(book);
+      ensureVersions(book);
       return;
     }
 
     // 位置变了要重算距离
     var places = SHLIB.buildPlaces(r.branches, S.spot);
 
+    // 结果内筛选：在「这本书的馆藏」里按馆名收窄。别名（display）不单独匹配，
+    // 它跟 name 常常只差一个括号分馆名，一起匹配只会让人以为能搜出别的馆。
+    // 后面的可借/营业中判断和空态计数都从收窄后的这批算——否则筛出 0 家时，
+    // 空态会拿全城数说「各处都已借出」，跟用户眼前的搜索范围对不上
+    var q = S.q.trim();
+    var qlc = q.toLowerCase();
+    var placesQ = !q ? places : places.filter(function (p) {
+      return String(p.name || '').toLowerCase().indexOf(qlc) >= 0;
+    });
+
     // 可借 = 有在架册。今日闭馆的馆也算可借（书就在架上，只是今天去不了），
     // 卡片上会标「今日闭馆」；是否只要此刻营业的，交给「营业中」勾选框。
     // 没有开放时间数据的（openToday === null）不再算营业中——「此刻开着」是这档的承诺，
     // 不知道就等于没承诺。这类馆卡片上标「开馆时间未知」，勾上「营业中」时被隐藏。
-    var availAll = places.filter(function (p) { return p.available > 0; });
+    var availAll = placesQ.filter(function (p) { return p.available > 0; });
     var anyAvail = availAll.length > 0;
     var availNow = availAll.filter(function (p) { return p.openNow === true; });
     // 「假期/调休日按常规时间闭馆」跟「根本没有开放时间」都会让 openToday 为 null，
@@ -2412,7 +2547,7 @@
     // 另外判断条件用 S.filter 本身，不能写成「且 anyAvail」：一册都没在架时那样会让
     // filterOn 变 false，于是「只看可借」档直接列出全部借出的馆，和按钮的说法相反。
     var filterOn = S.filter === 'avail';
-    var shown = places;
+    var shown = placesQ;
     if (filterOn) {
       shown = S.onlyOpen ? availNow : availAll;
     }
@@ -2451,6 +2586,18 @@
           : '') +
       '</div>';
 
+    // 结果内筛选框：放在筛选条下面一层。它只筛这本馆藏的卡片，不做全局检索，
+    // 所以形态比顶栏那颗玻璃药丸低一档。中文输入法合成中不重绘（换掉 input 会打断拼音）
+    var qbar = places.length
+      ? '<div class="fsearch">' + icon('search') +
+        '<input id="fq" type="text" value="' + esc(S.q) + '"' +
+        ' placeholder="筛选馆名" aria-label="筛选馆名"' +
+        ' autocomplete="off" spellcheck="false">' +
+        (S.q ? '<button type="button" class="clr" id="fqClear"' +
+          ' title="清除筛选" aria-label="清除筛选">' + icon('x') + '</button>' : '') +
+        '</div>'
+      : '';
+
     var cards = visible.map(function (p, i) { return cardHTML(p, i); }).join('');
 
     // ---- 空态：三种「没有一张卡」的原因，各给各的话术和出路。
@@ -2483,6 +2630,14 @@
           desc: '上图馆藏页的样子跟程序认的不一样，一家分馆都没读出来。' +
             '点下面的按钮重试一次；一直这样说明上图改版了，要更新程序。',
           actions: [{ act: 'requery', label: '重新查询', primary: true }]
+        });
+      } else if (q && !placesQ.length) {
+        // 搜索命中 0 家：跟「馆藏本身借空」分开说，出口是清掉搜索而不是重查上图
+        emptyHTML = emptyState({
+          icon: 'search',
+          title: '没有匹配的馆',
+          desc: '没有馆名含「' + esc(q) + '」的馆。换个词试试，或清除筛选看全部。',
+          actions: [{ act: 'clear-q', label: '清除筛选', primary: true }]
         });
       } else if (S.onlyOpen && anyAvail) {
         // 有在架册，但此刻没有一家能确定在营业
@@ -2539,6 +2694,19 @@
           ]
         });
         }
+      } else if (q) {
+        // 筛选命中了馆、但这些馆里没有在架册。不能说「各处都已借出」——
+        // 搜索范围外的馆可能还有可借的册，那句话会把用户劝退
+        emptyHTML = emptyState({
+          icon: 'book-x',
+          title: '这些馆没有在架册',
+          desc: '馆名或索书号含「' + esc(q) + '」的 ' + placesQ.length +
+            ' 家馆里，此刻都没有可借的册。',
+          actions: [
+            { act: 'clear-q', label: '清除筛选', primary: true },
+            { act: 'set-filter', v: 'all', label: '看这 ' + placesQ.length + ' 家全部馆藏' }
+          ]
+        });
       } else if (!anyAvail) {
         // 文案按复本数分三路：外借本全借出 / 只有馆内阅览本 / 连复本记录都没有。
         // inHouseTotal 只数参考外借、保存本、馆内阅览——它们的 total 不进 copyTotal，
@@ -2669,7 +2837,7 @@
       '<div class="result-inner' + (hasMap ? ' has-map' : '') + '">' +
       '<div class="res-cols">' +
       '<div class="res-list">' +
-      headHTML(book, meta) + geoBar + staleBar + holidayBar + toolbar + note + (emptyHTML || cards) + more +
+      headHTML(book, meta) + geoBar + staleBar + holidayBar + toolbar + qbar + note + (emptyHTML || cards) + more +
       // 底部只留「数据是什么时候的」这一件必须知道的事。「耗时 X 秒」是工程指标，删了；
       // 「查了几个版本」挪进 title：想知道的人悬停就有，不需要的人少看一行灰字
       '<div class="note res-meta' + (ds.stale ? ' stale' : '') + '"' +
@@ -2682,7 +2850,7 @@
       '</div></div>';
 
     bindResultEvents(book, shown, filterOn);
-    ensureEditions(book);
+    ensureVersions(book);
     // 工具栏是整块重绘的，滑块没有可复用的 DOM：先按当前选中项直接摆好，
     // 切筛选时由 bindResultEvents 里那次点击再补一段从旧位置滑过来的动画
     var segEl = document.querySelector('.toolbar .seg');
@@ -3425,13 +3593,13 @@
       icon(a.icon) + (a.sr ? '<span class="sr">' + a.sr + '</span>' : '') + a.text + '</span>';
   }
 
-  // 「今日 9:00-20:00 营业中」这类文字，卡片和信息窗共用
+  // 「营业中 · 9:00-20:30」这类文字，卡片和信息窗共用。
+  // 先说状态再说时段：状态是用户筛选时看的那一个词，时段只是补证
   function todayText(p) {
     // 假期/调休日按常规时间闭馆：只是待确认，不能补一句「已闭馆」
     if (p.holidayUnknown) return esc(p.today);
-    return p.today === '今日闭馆'
-      ? '今日闭馆'
-      : esc(p.today) + (p.openNow ? ' 营业中' : ' 已闭馆');
+    if (p.today === '今日闭馆') return '今日闭馆';
+    return (p.openNow ? '营业中' : '已闭馆') + ' · ' + esc(p.today);
   }
 
   function holidayTitle(p) {
@@ -3606,6 +3774,7 @@
       ' style="--ci:' + Math.min(idx, 9) + '"' +
       (hasPin ? ' data-idx="' + idx + '"' : '') + '>' +
       '<div class="row1">' + no + '<span class="name">' + esc(p.display) + '</span>' +
+      voteHTML(p) +
       '<span class="rside">' + actsHTML + distHTML + '</span></div>' +
       '<div class="meta"><div class="badges">' + badges.join('') + '</div>' + rides + '</div>' +
       foot +
@@ -3633,6 +3802,53 @@
     if ($('recenter')) $('recenter').addEventListener('click', recenterMap);
     var more = $('more');
     if (more) more.addEventListener('click', function () { S.showAll = !S.showAll; renderResult(); });
+
+    // 结果内筛选：逐键收窄卡片。输入法合成中不重绘（重绘会换掉 input、打断拼音），
+    // 合成结束再画；连续输入压 160ms，免得每敲一个字就把地图整块重建一次
+    var fq = $('fq');
+    if (fq) {
+      var composing = false;
+      var qTimer = 0;
+      function paintFiltered() {
+        qTimer = 0;
+        renderResult();
+        var nq = $('fq');
+        if (nq) {
+          nq.focus();
+          nq.setSelectionRange(nq.value.length, nq.value.length);
+        }
+      }
+      fq.addEventListener('compositionstart', function () { composing = true; });
+      fq.addEventListener('compositionend', function () {
+        composing = false;
+        S.q = fq.value;
+        clearTimeout(qTimer);
+        paintFiltered();
+      });
+      fq.addEventListener('input', function () {
+        if (composing) return;
+        S.q = fq.value;
+        clearTimeout(qTimer);
+        qTimer = setTimeout(paintFiltered, 160);
+      });
+      fq.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && S.q) {
+          e.preventDefault();
+          S.q = '';
+          clearTimeout(qTimer);
+          paintFiltered();
+        } else if (e.key === 'Enter') {
+          clearTimeout(qTimer);
+          paintFiltered();
+        }
+      });
+      var fqClear = $('fqClear');
+      if (fqClear) fqClear.addEventListener('click', function () {
+        S.q = '';
+        clearTimeout(qTimer);
+        paintFiltered();
+      });
+    }
 
     // 首屏定位引导条上的两颗按钮：跟顶栏那颗定位钮走同一套逻辑（tryGeo / openAddr）
     var geoGo = $('geoGo');
@@ -3897,6 +4113,11 @@
     if (save) save.disabled = ro;
     var test = $('keyTest');
     if (test) test.disabled = ro;
+    // 「重读豆瓣」第一步是写配置（存地址），只读设备上连这一步都没有——整枚钮不出现
+    ['doulistRefresh', 'wishRefresh'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.hidden = ro;
+    });
     var lan = $('lanToggle');
     if (lan) lan.disabled = ro;
     // 检查更新是写操作（POST，服务端只收本机请求），只读时不给点
@@ -4233,6 +4454,36 @@
     });
   }
 
+  // 两行豆瓣地址右侧的「重读」：先把这一节的两个地址存下去，再跳过缓存重新抓豆瓣。
+  // 只提交这两个键——服务端按字段合并（server.py 的 /api/config），不会碰 Key 和局域网开关，
+  // 所以在地址这一节点重读不会把半填的 Key 顺手保存掉。
+  // 两列各刷各的：改了豆列不该把想读也拖进一次慢请求
+  function refreshDoubanList(kind) {
+    var btn = $(kind === 'wish' ? 'wishRefresh' : 'doulistRefresh');
+    var body = {
+      doulist_url: $('setDoulist').value.trim(),
+      wish_url: $('setWish').value.trim()
+    };
+    if (btn) {
+      btn.classList.add('busy');
+      btn.disabled = true;
+    }
+    apiPost('/api/config', body).then(function () {
+      return apiGet('/api/config');
+    }).then(function (cfg) {
+      S.cfg = cfg;
+      return loadList(kind, true);
+    }).catch(function (e) {
+      // 地址写坏了就指到那一格，别再发一条 toast 重复一遍
+      if (e.field && showFieldErr(e.field, e.message)) return;
+      toast('重读失败：' + e.message, 'err');
+    }).then(function () {
+      if (!btn) return;
+      btn.classList.remove('busy');
+      btn.disabled = false;
+    });
+  }
+
   // ---------------------------------------------------------------- 启动
 
   function loadVenues() {
@@ -4245,6 +4496,8 @@
   function init() {
     // 先把 HTML 里的图标占位填上，再做别的（后面取按钮尺寸、切主题都依赖图标已在位）
     hydrateIcons();
+    // 馆评分跟本地服务无关：先读缓存再回云端，晚到就补一次重绘
+    loadRatings();
     // 便携模式：打包产物里会被置成 "1"。此时整站不往本机留任何痕迹——
     // 不读也不写 localStorage（位置、主题、面板开合全不记），
     // 免得一个「拷来拷去」的包在别人机器上留下你的坐标。
@@ -4317,11 +4570,6 @@
         if (act === 'ver-toggle') {
           S.versOpen[book.id] = !S.versOpen[book.id];
           paintVersions(book);
-          return;
-        }
-        if (act === 'ver-retry') {
-          delete S.editions[editionKey(book.title, false)];
-          ensureEditions(book);
           return;
         }
       }
@@ -4548,6 +4796,8 @@
     // 焦点圈在面板里：读屏/键盘用户 Tab 不到背后那层页面
     $('settings').addEventListener('keydown', function (e) { trapTab(this, e); });
     $('keyTest').addEventListener('click', testKey);
+    $('doulistRefresh').addEventListener('click', function () { refreshDoubanList('doulist'); });
+    $('wishRefresh').addEventListener('click', function () { refreshDoubanList('wish'); });
     $('restartSrv').addEventListener('click', restartServer);
     $('checkUpdate').addEventListener('click', onUpdateClick);
     // 「从其他设备访问」开关：只翻状态，保存时才写配置（见 saveSettings）。

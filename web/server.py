@@ -95,6 +95,16 @@ WISH_BATCH = 15
 DOULIST_MAX_BOOKS = 2000
 # 被豆瓣拦截后的冷却时间：期间不再打豆瓣，页面上的重试只会拿回同一句提示
 DOUBAN_BLOCK_COOL = 10 * 60
+# 「这本书的其他版本」区块（豆瓣详情页）的磁盘缓存：
+#   读到过版本留 30 天；确认这本书没有版本区块只留 7 天（万一是豆瓣改版）
+#   一条都没读到、又不确定 → 不写。写进去就是把这本书锁死，下次一个请求都不发、
+#   照着 30 天前的空结果复述
+VERSIONS_CACHE = os.path.join(DATA_DIR, 'versions-cache.json')
+VERSIONS_TTL = 30 * 24 * 3600
+VERSIONS_ABSENT_TTL = 7 * 24 * 3600
+VERSIONS_MAX = 8          # 区块只给几条预览，多条是兜上限，不给无限抓
+VERSIONS_RETRY_GAP = 0.8  # 没连上的那几条隔一下再打一趟
+VERSIONS_LOCK = threading.Lock()
 
 # 公开仓地址只在这里写一次：页面上的「GitHub 项目主页」和更新检测都从它来
 REPO = 'Giant-Apple/shlib-finder'
@@ -589,11 +599,14 @@ def parse_isbn(html):
 
 
 class DoubanBlocked(RuntimeError):
-    """豆瓣的拦截页 / 403 / 429。retry_after 是还要等多少秒再试。"""
+    """豆瓣的拦截页 / 403 / 429。retry_after 是本地冷却还剩多少秒。
+
+    不把这个秒数换算成「约几分钟」报给人：那是我们自己那道冷却的剩余值，
+    豆瓣的拦截页从不说明要等多久，而且它只在抛错那一刻算一次、之后不会走。
+    """
 
     def __init__(self, retry_after=0):
-        minutes = max(1, (int(retry_after) + 59) // 60)
-        super().__init__('豆瓣暂时限制了访问，约 %d 分钟后再试' % minutes)
+        super().__init__('豆瓣暂时限制了访问，请稍后再试')
         self.retry_after = int(retry_after)
 
 
@@ -714,6 +727,207 @@ def isbn_for_subject(raw_url):
         except Exception:
             pass
     return {'isbn': isbn}, 200
+
+
+# ---------------------------------------------------------------- 本书其他版本（豆瓣区块）
+#
+# 「这本书的其他版本」的清单只从豆瓣详情页那个区块来，上图接口不参与：拿书名去上图
+# 检索再判同，标题写法一变就多一条少一条（实测本机书架缓存 384 条书名查询有 242 条
+# 一条同书都对不上）。上图那套 /api/editions 只留给「只输书名加书」列候选版本。
+
+VER_BOX_RE = re.compile(r'<div[^>]*class="[^"]*\bversion_works\b[^"]*"', re.I)
+VER_AD_RE = re.compile(r'<div[^>]*class="[^"]*\bgray_ad\b[^"]*"', re.I)
+VER_LINK_RE = re.compile(
+    r'<a[^>]*href="https?://book\.douban\.com/subject/(\d+)/?"[^>]*>([\s\S]{1,120}?)</a>', re.I)
+VER_WORKS_RE = re.compile(
+    r'<a[^>]*href="https?://book\.douban\.com/works/(\d+)"[^>]*>([\s\S]{0,40}?)</a>', re.I)
+VER_INFO_RE = re.compile(r'id="info"[^>]*>([\s\S]{0,6000}?)</div>', re.I)
+VER_LABEL_RE = re.compile(r'^([^:：]{1,10})[:：]\s*(.*)$')
+VER_OG_RE = re.compile(
+    r'property="og:url"\s+content="https?://book\.douban\.com/subject/(\d+)', re.I)
+
+
+def parse_version_block(html):
+    """区块 → {editions:[{subjectId,url,publisher,year}], works:{url,total}}，没有就给空。
+
+    每条只写「出版社 （年份）」加一个条目链接，ISBN 要再进那一页读；标题里的
+    「全部 N」指向 /works/<id>，是这本书在豆瓣的版本总数。区块里还嵌着每个版本的
+    购书链接，但那些走 book.douban.com/link2/，不带 /subject/ 路径，
+    按这个前缀取刚好只剩版本本身。
+    """
+    m = VER_BOX_RE.search(html or '')
+    if not m:
+        return {'editions': [], 'works': None}
+    nxt = VER_AD_RE.search(html, m.end())
+    seg = html[m.start():nxt.start() if nxt else min(len(html), m.start() + 40000)]
+    seen, out = set(), []
+    for lm in VER_LINK_RE.finditer(seg):
+        sid, label = lm.group(1), _clean(lm.group(2))
+        if not label or sid in seen:
+            continue
+        seen.add(sid)
+        ym = re.search(r'(1[89]\d{2}|20\d{2})', label)
+        out.append({
+            'subjectId': sid,
+            'url': SUBJECT_URL % sid,
+            'publisher': re.sub(
+                r'[\s·・]*[（(]?\s*(?:1[89]\d{2}|20\d{2})\s*[）)]?\s*$', '', label).strip(),
+            'year': ym.group(1) if ym else '',
+        })
+    works = None
+    w = VER_WORKS_RE.search(seg)
+    if w:
+        n = re.sub(r'\D', '', _clean(w.group(2)))
+        works = {'url': 'https://book.douban.com/works/%s' % w.group(1),
+                 'total': int(n) if n else 0}
+    return {'editions': out[:VERSIONS_MAX], 'works': works}
+
+
+def _info_rows(html):
+    m = VER_INFO_RE.search(html or '')
+    if not m:
+        return []
+    return [_clean(x) for x in re.split(r'<br\s*/?>', m.group(1))]
+
+
+def _info_field(rows, name):
+    """#info 里「出版社: xxx」这种一行；值被 <br> 顶到下一行时（多作者）跟着取下一行。"""
+    re_row = re.compile(r'^%s\s*[:：]\s*(.*)$' % re.escape(name))
+    for i, r in enumerate(rows):
+        m = re_row.match(r)
+        if not m:
+            continue
+        if m.group(1).strip():
+            return m.group(1).strip()
+        nxt = rows[i + 1] if i + 1 < len(rows) else ''
+        return '' if VER_LABEL_RE.match(nxt) else nxt
+    return ''
+
+
+def parse_imprint(html):
+    """详情页 #info 的出版社 / 出版年。手动添加只给了 ISBN 的书靠它补，不再绕上图。"""
+    rows = _info_rows(html)
+    return {'publisher': _info_field(rows, '出版社'),
+            'year': only_year(_info_field(rows, '出版年'))}
+
+
+def _cached_versions(sid):
+    with VERSIONS_LOCK:
+        hit = (load_json(VERSIONS_CACHE, {}).get('subjects') or {}).get(sid)
+    if not hit:
+        return None
+    ttl = VERSIONS_ABSENT_TTL if hit.get('absent') else VERSIONS_TTL
+    return hit if time.time() - hit.get('at', 0) < ttl else None
+
+
+def _remember_versions(sid, entry):
+    with VERSIONS_LOCK:
+        cache = load_json(VERSIONS_CACHE, {})
+        cache.setdefault('subjects', {})[sid] = entry
+        atomic_write_json(VERSIONS_CACHE, cache, indent=1)
+
+
+def _edition_isbn(url):
+    """进一个版本页取 ISBN → (isbn, 连上了没)。
+
+    连不上和「连上了但那版没标 ISBN」要分开：前者重试一次，后者是真没有，
+    重试十次也不会有。"""
+    try:
+        page = douban_get(url, timeout=25)
+    except DoubanBlocked:
+        raise
+    except Exception:
+        return '', False
+    return parse_isbn(page), True
+
+
+def _build_versions(page_url):
+    """详情页 → 区块那几条 → 逐条读 ISBN。返回 (entry, error)，error 是 (payload, code)。"""
+    try:
+        page = douban_get(page_url, timeout=25)
+    except DoubanBlocked as e:
+        return None, ({'error': str(e), 'blockedFor': e.retry_after}, 502)
+    except Exception as e:
+        return None, ({'error': '豆瓣详情页没读通：%s' % e}, 502)
+    sid = _subject_id(page_url) or ''
+    from_isbn = not sid
+    if from_isbn:
+        m = VER_OG_RE.search(page)
+        sid = m.group(1) if m else ''
+    if '页面不存在' in page[:3000]:
+        # 地址本身没了：不缓存，下次换了 id 还能读到
+        return {'subjectId': sid, 'editions': [], 'works': None,
+                'imprint': {}, 'sure': True, 'fromCache': False}, None
+    if from_isbn and sid:
+        # ISBN 入口是靠 301 才认出条目 id 的，认出来就再看一次缓存：
+        # 条目 id 那路在进来之前已经查过，这一路查不到就得白打四条版本页
+        hit = _cached_versions(sid)
+        if hit:
+            return _versions_hit(sid, hit), None
+
+    box = parse_version_block(page)
+    items = box['editions']
+    rows = []
+    for it in items:
+        try:
+            rows.append(_edition_isbn(it['url']))
+        except DoubanBlocked as e:
+            return None, ({'error': str(e), 'blockedFor': e.retry_after}, 502)
+    missed = [i for i, r in enumerate(rows) if not r[1]]
+    if missed:
+        time.sleep(VERSIONS_RETRY_GAP)
+        for i in missed:
+            try:
+                rows[i] = _edition_isbn(items[i]['url'])
+            except DoubanBlocked as e:
+                return None, ({'error': str(e), 'blockedFor': e.retry_after}, 502)
+
+    seen, editions = set(), []
+    for i, (isbn, _reached) in enumerate(rows):
+        if not isbn or isbn in seen:
+            continue
+        seen.add(isbn)
+        it = items[i]
+        editions.append({'isbn': isbn, 'subjectId': it['subjectId'],
+                         'publisher': it['publisher'], 'year': it['year']})
+    sure = all(r[1] for r in rows)
+    imprint = parse_imprint(page)
+    entry = {'subjectId': sid, 'editions': editions, 'works': box['works'],
+             'imprint': imprint, 'sure': sure, 'fromCache': False}
+    # 只有「读到东西」或「确定这本书没有可列的版本」才落盘；那条没连上的不写，
+    # 否则一次网络抖动就把这本书锁死 7-30 天，之后一个请求都不发、照着空结果复述
+    if sid and (editions or sure):
+        _remember_versions(sid, {'at': time.time(), 'editions': editions,
+                                 'works': box['works'], 'imprint': imprint,
+                                 'absent': not editions})
+    return entry, None
+
+
+def _versions_hit(sid, hit):
+    out = dict(hit)
+    out.update({'subjectId': sid, 'fromCache': True, 'sure': True, 'at': hit.get('at', 0)})
+    return out
+
+
+def versions_for_book(raw_ref):
+    """本书其他版本 → (payload, http 码)。ref 认条目地址、条目 id 或 ISBN。"""
+    ref = (raw_ref or '').strip()[:200]
+    sid = _subject_id(ref) or (ref if re.fullmatch(r'\d{1,12}', ref or '') else '')
+    if sid:
+        hit = _cached_versions(sid)
+        if hit:
+            return _versions_hit(sid, hit), 200
+        page_url = SUBJECT_URL % sid
+    else:
+        isbn = normalize_isbn(ref)
+        if not isbn:
+            return {'error': '要豆瓣图书条目地址、条目 id 或 ISBN'}, 400
+        # book.douban.com/isbn/<isbn>/ 实测 301 到条目页，跟着跳就行
+        page_url = 'https://book.douban.com/isbn/%s/' % isbn
+    entry, err = _build_versions(page_url)
+    if err:
+        return err
+    return entry, 200
 
 
 def fetch_editions(term, by_isbn=False):
@@ -1682,6 +1896,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json(update_peek())
         if path == '/api/editions':
             return self.api_editions()
+        if path == '/api/versions':
+            payload, code = versions_for_book(self.query().get('book', ''))
+            return self.json(payload, code)
         if path == '/api/isbn':
             payload, code = isbn_for_subject(self.query().get('url', ''))
             return self.json(payload, code)
@@ -1842,6 +2059,7 @@ class Handler(SimpleHTTPRequestHandler):
                 'cycling': bool(amap_key(cfg)),
                 'editions': True,
                 'isbn': True,
+                'versions': True,
             },
             # 开关的值和「本次进程实际有没有监听局域网」是两回事：拨完开关就地换监听地址
             # （见 apply_lan_binding），所以正常情况下这两个值一保存就一致；
@@ -1967,6 +2185,8 @@ class Handler(SimpleHTTPRequestHandler):
     def api_venues(self):
         venues = load_json(VENUES_PATH, [])
         self.json({'venues': [{
+            # 评分的键：馆名会改、display 会改，id 是上图那边稳定的那个
+            'id': (v.get('id') or '').strip(),
             'n': (v.get('name') or '').strip(),
             'd': (v.get('display') or v.get('name') or '').strip(),
             'a': (v.get('address') or '').strip(),

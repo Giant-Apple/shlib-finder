@@ -972,6 +972,9 @@ main.aside-min #aside { padding-top: 0; }
   gap: 6px;
   min-width: 0;
   margin-top: 1px;
+  /* 这一格固定 17px（= 真 ISBN 的 11px 字 × 1.55 行距）：后台补来的占位条也站同一格，
+     补到的那一帧整行不会从 70.0 长成 71.8 */
+  min-height: 17px;
 }
 .book .isbn > span {
   min-width: 0;
@@ -1282,17 +1285,16 @@ html[data-theme="dark"] .res-head .extlink:hover img { background: #eef2f5; }
   color: var(--brand);
 }
 .dbv-go.none { color: var(--ink-3); }
-/* 版本查询的说明行（没有其他版本 / 正在查 / 查失败重试） */
-.db-vers-note {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+/* 展开列表末尾「全部 N 个版本」：跳豆瓣版本总表的文字链。
+   刻意不跟 .db-ver 一样画成胶囊——上面每一行是「把这一版加进书架查上图」，
+   这一行是离开本页去豆瓣，长得一样会被读成「第五个版本」。
+   读不到版本时整块不出现（没有"查询失败/重试"这种占位说明），所以这里只有链接 */
+.db-vers-rows .db-vers-all {
+  margin-left: 0;
+  padding: 2px 8px 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--ink-3);
 }
-.db-vers-note .spin { width: 11px; height: 11px; border-width: 2px; }
 /* 待选版本（书名没有 ISBN 时）：行更高、动作在右侧，跟结果页的版本列表同一套行样式 */
 .db-vers-rows.pick { margin-top: 12px; gap: 6px; }
 .db-vers-rows.pick .db-ver { height: auto; min-height: 36px; padding: 6px 10px; }
@@ -1349,12 +1351,60 @@ html[data-theme="dark"] .res-head .extlink:hover img { background: #eef2f5; }
 @media (min-width: 641px) {
   .toolbar .seg,
   .settings .seg { height: var(--ctl-sm); }
-  .toolbar .seg button,
+  /* 工具栏的分段比设置页再扁一点：外槽 32、内距 2、按钮 26，滑块跟着收到 2 */
+  .toolbar .seg { padding: 2px; }
+  .toolbar .seg .seg-thumb { top: 2px; bottom: 2px; }
+  .toolbar .seg button { height: 26px; padding: 0 12px; }
   .settings .seg button { height: 24px; }
   .toolbar .tgl,
   .settings .tgl { height: var(--ctl-sm); }
   .toolbar button.icon-btn { width: var(--ctl-sm); height: var(--ctl-sm); }
 }
+/* 结果内筛选框：只收窄这本书的卡片，属于列表工具，层级比顶栏的玻璃药丸低一档——
+   实底、细描边。它跟筛选条分两行，免得把「可借 / 全部」挤成半行。
+   上边距 10：工具栏那道下边线就是它的上沿，不留距看着像框被线压住 */
+.fsearch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  margin: 10px 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-solid);
+  transition: border-color .14s, box-shadow .14s;
+}
+.fsearch:focus-within {
+  border-color: var(--brand-line);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+.fsearch > .ic { width: 14px; height: 14px; flex: none; color: var(--ink-3); transition: color .14s; }
+.fsearch:focus-within > .ic { color: var(--brand); }
+.fsearch input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  outline: none;
+  color: var(--ink);
+}
+.fsearch input::placeholder { color: var(--ink-3); }
+.fsearch .clr {
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+}
+.fsearch .clr:hover { color: var(--ink-2); }
+.fsearch .clr .ic { width: 12px; height: 12px; }
+
 /* 筛选：两个纯文字按钮，选中靠浅底色 + 品牌色，不画外框——外框加内边距太占横排空间 */
 /* 分段按钮（.seg）：一处样式三处用——工具栏「可借 | 全部」、设置页「展开 | 收起」。
    形态是「浅槽 + 浮块」：外圈是几乎看不见的凹槽，选中项浮起一小块面板。
@@ -1855,7 +1905,9 @@ button.icon-btn.on:hover:not(:disabled) {
    信息一条不少，但不再有每条的底色/描边/圆角/阴影去抢注意力 */
 
 .card {
-  padding: 12px 2px;
+  /* 上下 8px：原来 12px 时一张卡实测 93px，纵向空白比信息本身还多。
+     收到 8 后是 81px，三行内容（馆名 / 状态 / 展开钮）都还在原位 */
+  padding: 8px 2px;
   position: relative;        /* 给 .hit::before 那根点名线、下面那层底色当定位基准 */
   /* 底色拉开成独立一层（.card::after，z-index:-1），所以这里必须自己成叠层上下文，
      否则它会一路穿到结果纸的背景后面，什么也看不见 */
@@ -1894,8 +1946,9 @@ button.icon-btn.on:hover:not(:disabled) {
   content: '';
   position: absolute;
   left: -8px;
-  top: 10px;
-  bottom: 10px;
+  /* 比卡片内容上下各多出 2px（内距 8px − 2）：跟内距 12px 时的 10px 同一视觉 */
+  top: 6px;
+  bottom: 6px;
   width: 2px;
   border-radius: 1px;
   background: var(--brand);
@@ -1947,16 +2000,41 @@ button.icon-btn.on:hover:not(:disabled) {
 /* 全部借出的一行降一档：馆名退成次要色，其余照旧（别整行变灰，不然读起来像失效） */
 .card.out .name { color: var(--ink-2); font-weight: 400; }
 
+/* 馆评分：馆名右侧的赞数（净额）。本地版只读，只画数字，不给 hover / 指针。
+   18px 高、12.5px 图标、12px 数字，跟第三行的索书号小字同档，不压过馆名 */
+.vote { display: inline-flex; align-items: center; gap: 1px; flex: none; }
+.vote-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 18px; padding: 0 4px; margin: 0 -2px;
+  border: 0; border-radius: 5px; background: none;
+  color: var(--ink-3); font: inherit; font-size: 12px; line-height: 1;
+  cursor: pointer; transition: background .12s, color .12s;
+}
+.vote-btn .ic { width: 12.5px; height: 12.5px; flex: none; stroke-width: 2; }
+.vote-btn .cnt { font-variant-numeric: tabular-nums; }
+.vote-btn:hover { background: var(--hover); color: var(--ink-2); }
+.vote-btn:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
+.vote-btn[aria-pressed="true"] .ic { fill: currentColor; stroke-width: 1.6; }
+.vote-btn.up[aria-pressed="true"] { color: var(--brand); }
+.vote-btn.down[aria-pressed="true"] { color: var(--ink); }
+.vote-btn[disabled] { cursor: default; }
+.vote-btn[disabled]:hover { background: none; color: var(--ink-3); }
+.vote-btn[disabled] .ic { opacity: .3; }
+.vote.ro .vote-btn { cursor: default; }
+.vote.ro .vote-btn:hover { background: none; color: var(--ink-3); }
+/* 名字自己截断，赞数不被挤走；-3px 抵掉 row1 的 8px 间距，视觉上离名字 5px */
+.card .row1 .vote { margin-left: -3px; }
+
 /* 拨号 / 导航：两个图标按钮（推右的活儿交给外层 .rside）。
-   字形收在 14px：16px 的图标比同排 13px/600 的馆名还抢眼；可点区留 30px，
-   够得着但不占横向空间——第一行还要放馆名、距离和骑行用时 */
+   字形收在 14px：16px 的图标比同排 13px/600 的馆名还抢眼；可点区桌面 26px，
+   够得着但不占横向空间——第一行还要放馆名、距离和骑行用时（触屏见下面补回 30px） */
 .card .acts {
   display: flex; align-items: center; gap: 2px;
   flex: none;
 }
 .card .acts a {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px;
+  width: 26px; height: 26px;
   border-radius: 999px;
   color: var(--ink-3);
   text-decoration: none;
@@ -2395,6 +2473,9 @@ html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0
 .row > input { flex: 1 1 auto; min-width: 0; }
 .row > .w-narrow { width: 92px; flex: none; }
 .row > button { flex: none; height: var(--ctl); padding: 0 16px; font-size: 14px; }
+/* 行尾的图标钮（设置里两行豆瓣地址旁的「重读」）：跟输入框同高的方钮，
+   内距清零才放得正——.row > button 那 16px 左右内距是给文字按钮准备的 */
+.row > button.icon-btn { width: var(--ctl); height: var(--ctl); padding: 0; flex: none; }
 .mt { margin-top: 8px; }
 
 /* 底部按钮：钉在面板下沿、不随内容滚走；上面一道细线把滚动区收口，
@@ -2414,16 +2495,53 @@ html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0
 /* 左侧：GitHub 标记在前，版本号在后；标记的点击区 32 见方，图标本身只占 16 */
 .about-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .about-row .ver { min-width: 0; }
-.about-acts { display: flex; flex: none; gap: 6px; }
+.about-acts { display: flex; flex: none; gap: 8px; }
 .about-acts button { height: var(--ctl-sm); padding: 0 12px; font-size: 13px; }
-/* GitHub 入口：图标按钮，和旁边两颗文字按钮同高；只放品牌标记 */
+/* 重启服务会把本地服务换掉（server.py 的改动才生效），是这一排唯一「做了有代价」的动作：
+   用 --warn 那一族标出来。品牌色仍只留给可点和选中，两边不抢 */
+.about-acts button.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 34%, transparent);
+  background: var(--warn-soft);
+}
+.about-acts button.warn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+}
+/* 问题反馈：跟右边的按钮同高一排，用中性描边胶囊——它是外链，不是这一页的主操作。
+   静置底跟全局 button 同一层（--panel-2）：少了它，这一排只有它是透明的，
+   在玻璃面板上比邻钮实打实浅一档，看着就是「颜色不一样」 */
+.about-acts .about-fb {
+  display: inline-flex;
+  align-items: center;
+  height: var(--ctl-sm);
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.about-acts .about-fb:hover { background: var(--hover-2); }
+.about-acts .about-fb:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: var(--ring);
+}
+/* GitHub 入口：图标按钮，和旁边两颗文字按钮同高；只放品牌标记。
+   圆角跟其它纯图标钮一样取正圆（设置右上 X、书架「移除」都是 50%），别再独一份方圆角 */
 .about-id .about-gh {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: var(--ctl-sm);
   height: var(--ctl-sm);
-  border-radius: 9px;
+  border-radius: 50%;
   color: var(--ink-2);
 }
 .about-id .about-gh:hover { color: var(--ink); background: var(--hover); }
@@ -2649,6 +2767,31 @@ html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
   padding: 16px 2px; color: var(--ink-3); font-size: 13px;
 }
 
+/* 占位条：后台才补到的信息（书架的 ISBN、本书其他版本那颗胶囊）先按落位后的尺寸占好位置。
+   底用 --hover-2 那一层（--chip 在玻璃面板上几乎看不见，--line 又跟描边抢注意力），
+   呼吸只动 .7→1 的透明度，别从透明淡起来——那等于一半时间根本看不见。
+   不用转圈：转圈是「在等一个确定的结果」，占位条是「这里一会儿会长出内容」，读法不同 */
+.skel {
+  display: inline-block;
+  flex: none;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--hover-2);
+  animation: skelPulse 1.5s ease-in-out infinite;
+}
+@keyframes skelPulse {
+  0%, 100% { opacity: .7; }
+  50% { opacity: 1; }
+}
+/* 占位的 ISBN 条：宽度比真值（「ISBN 」+ 13 位 ≈ 112px）短一档，
+   留出「这还在补」的语气，又不会比补到之后更长 */
+.book .isbn .skel { width: 104px; }
+/* 占位的版本胶囊：直接借用 .db-vers-head 那套内距和描边，条高用同一个 1.4em，
+   所以胶囊外高和真值一样（23.4px），版本到货换成真胶囊时不跳。
+   pointer-events:none：它不可点，别给悬停反馈 */
+.db-vers-head.skel-head { pointer-events: none; }
+.db-vers-head.skel-head .skel { width: 72px; height: 1.4em; }
+
 /* 单列（窄窗口 / 手机）：改成整页一起滚。只有结果区自己滚的话，书单区永远钉在顶上，
    翻的时候得在一小块里抠着划。整页滚，让位放在 body 上，滚走就滚走了 */
 /* 面板窄时第一行右侧那簇会顶掉馆名：用时先让位（导航图标照样能带过去） */
@@ -2731,10 +2874,12 @@ html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
      行与行之间隔着 12px 间距（卡片自己的 margin-bottom），底色要连这段一起盖：
      第二行起上沿多让 12px，于是被点中的那行从上一道分隔线铺到自己那道，
      行首不会在空隙里露一条白 */
-  .card { padding: 12px; margin-bottom: 12px; }
+  .card { padding: 8px; margin-bottom: 12px; }
   .card + .card { --seat-up: 12px; }
   .card .row1 { gap: 8px; }
   .card .acts { gap: 0; }
+  /* 桌面收到 26px 的那两枚，触屏补回 30px：手指点得着的下限比省纵向空间优先 */
+  .card .acts a { width: 30px; height: 30px; }
   .card .meta { margin-top: 4px; }
   .card .foot-body { flex-wrap: wrap; row-gap: 4px; }
   .card .foot .callnos { max-width: 100%; flex-wrap: wrap; }
@@ -2820,6 +2965,8 @@ main.aside-min .aside-rail:focus-visible { outline: 2px solid var(--brand-line);
   .map-bg { transition: none; }
   .seg-thumb { transition: none; }
   .select-menu { animation: none; }
+  /* 占位条的呼吸也是装饰：位置照占，只是不再明暗（转圈 .spin 不在此列，它在报「还在等」） */
+  .skel { animation: none; }
 }
 /* 重新查询进行中：结果区整体置灰一档，查完（renderResult）恢复。
    置灰加在 #result 上（innerHTML 换不掉它），目标选 .result-inner——
