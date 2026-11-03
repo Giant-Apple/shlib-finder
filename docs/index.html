@@ -333,7 +333,7 @@
         </div>
         <div>
           <div class="shot">
-            <img src="feature/01-hero.jpg" width="1600" height="1006"
+            <img src="feature/01-hero.jpg" width="1600" height="1030"
                  alt="上图馆藏查询界面：左侧是书架，中间是某一本书在各馆的在架数量与距离，右侧是标出各馆位置的地图。">
           </div>
         </div>
@@ -449,10 +449,16 @@ cd shlib-finder
           <div class="a"><p>免安装版只有 Windows，macOS / Linux 用源码运行；不想装 Python 的话，三个系统都能装浏览器插件，在豆瓣图书页直接看馆藏；手机连同一个 Wi-Fi 打开网址就能查，不用装 App。</p></div>
         </details>
         <details>
+          <summary>馆名旁边的赞和数字是什么？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a"><p>是对这家馆的喜爱程度，和具体哪本书无关：数字是净额（赞 − 不喜欢），只有至少 2 台不同设备赞过才出现；一家馆一天一票、投过不能改，「不喜欢」的次数本身不公开。赞和<span class="keep">「不喜欢」</span>目前只在浏览器插件里能投，本地版只显示数字，读不到就不显示。</p></div>
+        </details>
+        <details>
           <summary>书单和地址会上传吗？
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
-          <div class="a"><p>不会。程序跑在自己电脑上，不登录、不统计；查书时只连豆瓣、上图和高德，点<span class="keep">「检查更新」</span>才连 GitHub。</p></div>
+          <div class="a"><p>不会。程序跑在自己电脑上，不登录、不统计；查书时只连豆瓣、上图和高德，打开页面时读一次公开发布的馆评分结果（不带任何本机信息），点<span class="keep">「检查更新」</span>才连 GitHub。</p></div>
         </details>
         <details>
           <summary>可以自己改、自己打包吗？
