@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.parse
 from unittest import mock
 
@@ -37,6 +38,29 @@ SEARCH = json.dumps({'records': [
     {'id': '4'},
     {'id': '5'},
 ]})
+
+# ISBN 检索走 RSS 视图：item 的 link 是记录 id，channel 里有精确总数
+SEARCH_RSS = '''<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+<channel>
+<opensearch:totalResults>1</opensearch:totalResults>
+<item>
+  <title>中文计算机</title>
+  <link>http://vufind.library.sh.cn/Record/2</link>
+  <author>墨磊宁</author>
+</item>
+</channel>
+</rss>'''
+
+# 上图 HTML 检索页的最小片段：标题链接带整页 ids 参数，正是要跳过的那种
+SEARCH_HTML = '''<html><body>
+<a href="/Record/1?ids=1,2,3,4,5" class="title getFull">甲</a>
+<a href="/Record/2?ids=1,2,3,4,5" class="title getFull">乙</a>
+<a href="/Record/2?ids=1,2,3,4,5" class="title getFull">乙（重复链接）</a>
+<a href="/Record/3?ids=1,2,3,4,5" class="title getFull">丙</a>
+<a href="/Record/4?ids=1,2,3,4,5" class="title getFull">丁</a>
+<a href="/Record/5?ids=1,2,3,4,5" class="title getFull">戊</a>
+</body></html>'''
 
 RIS_BY_ID = {
     '1': '''TY  - BOOK
@@ -89,6 +113,9 @@ class FakeUpstream(object):
         if '/api/v1/search' in url:
             self.last_query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
             return SEARCH
+        if '/Search/Results' in url:
+            self.last_query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            return SEARCH_RSS if 'view=rss' in url else SEARCH_HTML
         if '/Export?style=RIS' in url:
             rid = url.split('/Record/')[1].split('/')[0]
             return RIS_BY_ID.get(urllib.parse.unquote(rid), '')
@@ -145,6 +172,7 @@ class FetchEditionsTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.upstream = FakeUpstream()
+        server.SEARCH_API_DOWN_UNTIL[0] = 0
         for target, value in (
             ('EDITIONS_CACHE', os.path.join(self.tmp, 'cache.json')),
             ('http_get', self.upstream),
@@ -197,6 +225,80 @@ class FetchEditionsTest(unittest.TestCase):
             d = server.fetch_editions('没有这本书的书名')
         self.assertEqual(d['editions'], [])
         self.assertEqual(d['records'], 0)
+
+    def test_isbn_search_falls_back_to_rss(self):
+        # ISBN 是精确检索，RSS 视图够用且只有 2 KB，还带 opensearch:totalResults
+        def blocked(url, timeout=30, headers=None, data=None):
+            if '/api/v1/search' in url:
+                raise urllib.error.HTTPError(url, 555, 'blocked', {}, None)
+            return self.upstream(url, timeout, headers, data)
+        with mock.patch.object(server, 'http_get', blocked):
+            rid = server.fetch_shl_id('9787559887948')
+            d = server.search_records('9787559887948', 'ISBN', 20)
+        self.assertEqual(rid, '2')
+        self.assertEqual(d['resultCount'], 1)
+        self.assertEqual(d['records'][0]['title'], '中文计算机')
+        self.assertEqual(d['records'][0]['authors'], {'primary': {'墨磊宁': []}})
+        self.assertTrue(any('view=rss' in u for u in self.upstream.calls))
+
+    def test_html_search_keeps_result_order_and_dedupes(self):
+        ids = server.search_html_ids('中文计算机', 'Title', 20)[0]
+        self.assertEqual(ids, ['1', '2', '3', '4', '5'])
+        self.assertEqual(self.upstream.last_query['type'], ['Title'])
+        self.assertEqual(self.upstream.last_query['limit'], ['20'])
+
+    def test_api_555_falls_back_to_html_search(self):
+        # 2026-11-04 实测：/api/v1/search 被上图前置防护挡成 555 空响应，HTML 检索页正常。
+        # 回退后版本列表要和 API 正常时一致。
+        def blocked(url, timeout=30, headers=None, data=None):
+            if '/api/v1/search' in url:
+                raise urllib.error.HTTPError(url, 555, 'blocked', {}, None)
+            return self.upstream(url, timeout, headers, data)
+        with mock.patch.object(server, 'http_get', blocked):
+            d = server.fetch_editions('中文计算机')
+        self.assertEqual([e['isbn'] for e in d['editions']],
+                         ['9787559887948', '9787521712345', '9787111334567'])
+        self.assertEqual(d['records'], 5)
+        self.assertTrue(any('/Search/Results' in u for u in self.upstream.calls))
+
+    def test_html_fallback_total_is_unknown_when_more_pages(self):
+        html = ('<a href="/Record/9?ids=9" class="title getFull">甲</a>'
+                '<a href="/Search/Results?lookfor=x&amp;page=2">Next</a>')
+
+        def blocked(url, timeout=30, headers=None, data=None):
+            if '/api/v1/search' in url:
+                raise urllib.error.HTTPError(url, 555, 'blocked', {}, None)
+            return html
+        with mock.patch.object(server, 'http_get', blocked):
+            d = server.search_records('x', 'Title', 20)
+        # 有下一页时拿不到总数：给 0，不把单页条数冒充总数
+        self.assertEqual(d['resultCount'], 0)
+        self.assertEqual(d['records'], [{'id': '9'}])
+
+    def test_html_fallback_total_is_exact_on_last_page(self):
+        def blocked(url, timeout=30, headers=None, data=None):
+            if '/api/v1/search' in url:
+                raise urllib.error.HTTPError(url, 555, 'blocked', {}, None)
+            return SEARCH_HTML
+        with mock.patch.object(server, 'http_get', blocked):
+            d = server.search_records('中文计算机', 'Title', 20)
+        self.assertEqual(d['resultCount'], 5)
+        self.assertEqual([r['id'] for r in d['records']], ['1', '2', '3', '4', '5'])
+
+    def test_blocked_api_is_not_retried_immediately(self):
+        api_hits = [0]
+
+        def blocked(url, timeout=30, headers=None, data=None):
+            if '/api/v1/search' in url:
+                api_hits[0] += 1
+                raise urllib.error.HTTPError(url, 555, 'blocked', {}, None)
+            return SEARCH_HTML
+        with mock.patch.object(server, 'http_get', blocked):
+            server.search_records('甲', 'Title', 20)
+            server.search_records('乙', 'Title', 20)
+        # 第一发撞了 555 之后进冷却，第二次检索不再先去撞接口
+        self.assertEqual(api_hits[0], 1)
+        self.assertGreater(server.SEARCH_API_DOWN_UNTIL[0], time.time())
 
 
 DOULIST_ITEM = '''

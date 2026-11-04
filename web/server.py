@@ -81,6 +81,11 @@ EDITIONS_QUERY_TTL = 24 * 3600
 EDITIONS_MAX_RECORDS = 20   # 一次检索最多展开多少条记录去取 ISBN
 EDITIONS_MAX_RETURN = 12    # 去重后最多返回多少个可查版本
 
+# 2026-11-04 起上图的前置防护把 /api/v1/search 挡成 555（HTML 检索页、RIS 导出、
+# 馆藏 AjaxTab 都正常）。失败后冷却 10 分钟再去试 JSON 接口，别让每次检索都先撞一次。
+SEARCH_API_COOL = 10 * 60
+SEARCH_API_DOWN_UNTIL = [0.0]
+
 # 豆瓣条目详情（其他版本 / 喜欢这本书的人也喜欢 / 高赞短评）已随「豆瓣上的书」模块一起撤掉。
 # 这里只留抓条目页取 ISBN 所需的最小配置（书单补 ISBN 仍走豆瓣）。
 DOUBAN_MIN_GAP = 0.6
@@ -930,11 +935,86 @@ def versions_for_book(raw_ref):
     return entry, 200
 
 
+def search_html_ids(term, typ, limit, page=1):
+    """从 HTML 检索页的结果列表里按顺序取记录 id；页面没有下一页时顺带给出精确条数。
+
+    结果标题链接是唯一稳定且按结果排序的锚点（同一页里其他 /Record/ 链接都带
+    ?ids= 参数，是整页 id 的逗号列表，不能按出现顺序当结果用）。
+    """
+    q = urllib.parse.urlencode({'lookfor': term, 'type': typ, 'limit': limit, 'page': page})
+    html = http_get(UPSTREAM + '/Search/Results?' + q, timeout=40)
+    ids = []
+    for tag in re.findall(r'<a\b[^>]*>', html):
+        if 'class="title getFull"' not in tag:
+            continue
+        m = re.search(r'href="/Record/([^"/?]+)', tag)
+        if m and m.group(1) not in ids:
+            ids.append(m.group(1))
+    more = bool(re.search(r'[?&](?:amp;)?page=%d\b' % (page + 1), html))
+    return ids, more
+
+
+def search_rss(term, typ, limit, page=1):
+    """HTML 检索页的 RSS 视图：约 2 KB，带 opensearch:totalResults 精确总数。
+
+    只用于 ISBN 精确检索——RSS 固定按 last_indexed 排序（sort 参数改不动），
+    书名检索要按相关度取前 N 条，仍走 HTML 页。
+    """
+    q = urllib.parse.urlencode({
+        'lookfor': term, 'type': typ, 'limit': limit, 'page': page, 'view': 'rss',
+    })
+    xml = http_get(UPSTREAM + '/Search/Results?' + q, timeout=20)
+    recs = []
+    for block in re.findall(r'<item>(.*?)</item>', xml, re.S):
+        link = re.search(r'<link>[^<]*?/Record/([^</?]+)', block)
+        if not link or any(r['id'] == link.group(1) for r in recs):
+            continue
+        title = re.search(r'<title>(.*?)</title>', block, re.S)
+        author = re.search(r'<(?:dc:creator|author)>(.*?)</(?:dc:creator|author)>', block, re.S)
+        rec = {'id': link.group(1)}
+        if title:
+            rec['title'] = _html.unescape(title.group(1)).strip()
+        if author:
+            rec['authors'] = {'primary': {_html.unescape(author.group(1)).strip(): []}}
+        recs.append(rec)
+    total = re.search(r'<opensearch:totalResults>(\d+)</opensearch:totalResults>', xml)
+    return recs[:limit], int(total.group(1)) if total else 0
+
+
+def search_records(term, typ='Title', limit=20, page=1):
+    """检索记录 id，统一返回 {'resultCount': int, 'records': [{'id', 'title'}]}。
+
+    先走 JSON API；被上图前置防护挡掉（实测 555 空响应）时，ISBN 走 RSS 视图、
+    书名走 HTML 检索页（保相关度序）。HTML 页拿不到总条数：有下一页时 resultCount
+    给 0（未知），别把单页条数冒充总数。
+    """
+    if time.time() >= SEARCH_API_DOWN_UNTIL[0]:
+        try:
+            q = urllib.parse.urlencode({'lookfor': term, 'type': typ, 'limit': limit, 'page': page})
+            d = json.loads(http_get(UPSTREAM + '/api/v1/search?' + q, timeout=15))
+            SEARCH_API_DOWN_UNTIL[0] = 0
+            recs = [r for r in (d.get('records') or []) if r.get('id')][:limit]
+            return {
+                'resultCount': int(d.get('resultCount') or 0),
+                'records': [{'id': r['id'], 'title': r.get('title') or ''} for r in recs],
+            }
+        except Exception:
+            SEARCH_API_DOWN_UNTIL[0] = time.time() + SEARCH_API_COOL
+    if typ == 'ISBN':
+        recs, total = search_rss(term, typ, limit, page)
+        return {'resultCount': total, 'records': recs}
+    ids, more = search_html_ids(term, typ, limit, page)
+    return {
+        'resultCount': 0 if more else len(ids),
+        'records': [{'id': rid} for rid in ids],
+    }
+
+
 def fetch_editions(term, by_isbn=False):
     """按书名（或 ISBN）列出上图可查的版本，每条都带 ISBN。
 
     书名列的是「记录」，同一条书目会有多个副本记录；能拿去查馆藏的键是 ISBN，
-    所以先去 /api/v1/search 拿记录 id，再读每条记录的 RIS 导出（约 200 字节，
+    所以先去检索拿记录 id（search_records），再读每条记录的 RIS 导出（约 200 字节，
     含 ISBN / 书名 / 作者 / 出版社 / 出版年 / 版次），按 ISBN 去重。
 
     为什么不用书名直接查馆藏：上图书名检索是模糊匹配，会把别的书的馆藏算进来
@@ -954,15 +1034,9 @@ def fetch_editions(term, by_isbn=False):
     if hit and now - hit.get('at', 0) < EDITIONS_QUERY_TTL:
         ids = hit.get('ids') or []
     else:
-        q = urllib.parse.urlencode({
-            'lookfor': term,
-            'type': 'ISBN' if by_isbn else 'Title',
-            'limit': EDITIONS_MAX_RECORDS,
-            'page': 1,
-        })
-        data = json.loads(http_get(UPSTREAM + '/api/v1/search?' + q, timeout=20))
-        ids = [r.get('id') for r in (data.get('records') or []) if r.get('id')]
-        ids = ids[:EDITIONS_MAX_RECORDS]
+        data = search_records(term, 'ISBN' if by_isbn else 'Title',
+                              EDITIONS_MAX_RECORDS, 1)
+        ids = [r['id'] for r in data['records']][:EDITIONS_MAX_RECORDS]
         with EDITIONS_LOCK:
             cache = load_json(EDITIONS_CACHE, {})
             cache.setdefault('queries', {})[key] = {'at': now, 'ids': ids}
@@ -1107,9 +1181,7 @@ def fetch_shl_id(isbn):
     if not isbn:
         return ''
     try:
-        q = urllib.parse.urlencode({'lookfor': isbn, 'type': 'ISBN', 'limit': 1, 'page': 1})
-        d = json.loads(http_get(UPSTREAM + '/api/v1/search?' + q, timeout=15))
-        recs = d.get('records') or []
+        recs = search_records(isbn, 'ISBN', 1, 1).get('records') or []
         if recs and recs[0].get('id'):
             return recs[0]['id']
     except Exception:
@@ -1896,6 +1968,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json(update_peek())
         if path == '/api/editions':
             return self.api_editions()
+        if path == '/api/search':
+            return self.api_search()
         if path == '/api/versions':
             payload, code = versions_for_book(self.query().get('book', ''))
             return self.json(payload, code)
@@ -2058,6 +2132,7 @@ class Handler(SimpleHTTPRequestHandler):
             'features': {
                 'cycling': bool(amap_key(cfg)),
                 'editions': True,
+                'search': True,
                 'isbn': True,
                 'versions': True,
             },
@@ -2311,6 +2386,39 @@ class Handler(SimpleHTTPRequestHandler):
             data = fetch_editions(q, by_isbn)
         except Exception as e:
             return self.json({'error': '查询上图版本失败：%s' % e}, 502)
+        self.json(data)
+
+    def api_search(self):
+        """给页面用的上图检索：{resultCount, records:[{id, title, authors}]}。
+
+        前端查馆藏只要记录 id；第一条再读一次 RIS 带上书名/作者，
+        「只填 ISBN 加书」时输入框里那串数字才能换成正式书名。
+        """
+        q = self.query()
+        lookfor = (q.get('lookfor') or '').strip()
+        typ = (q.get('type') or 'Title').strip()
+        if not lookfor:
+            return self.json({'error': '缺少 lookfor 参数'}, 400)
+        if typ not in ('Title', 'ISBN'):
+            return self.json({'error': '不支持的检索类型'}, 400)
+        try:
+            limit = max(1, min(int(q.get('limit') or 20), 50))
+        except ValueError:
+            limit = 20
+        try:
+            data = search_records(lookfor, typ, limit, 1)
+        except Exception as e:
+            return self.json({'error': '查询上图失败：%s' % e}, 502)
+        head = data['records'][0] if data['records'] else None
+        if head and (not head.get('title') or not head.get('authors')):
+            try:
+                m = fetch_record_meta(head['id'])
+                if not head.get('title'):
+                    head['title'] = m.get('title') or ''
+                if m.get('author'):
+                    head['authors'] = {'primary': {m['author']: []}}
+            except Exception:
+                pass   # 补书目失败不影响按 id 查馆藏
         self.json(data)
 
     def api_geocode(self):

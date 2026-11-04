@@ -1941,8 +1941,13 @@
   }
 
   function searchPage(lookfor, type) {
-    return apiGet(API + '/api/v1/search?lookfor=' + encodeURIComponent(lookfor) +
-      '&type=' + type + '&limit=' + PAGE_LIMIT + '&page=1');
+    // 上图把 /api/v1/search 挡成 555 之后，检索统一走本地服务（它会在 API 不行时
+    // 解析 HTML 检索页）。旧进程没有这个接口，明说要重启，别让页面满是 404。
+    if (S.cfg && S.cfg.features && !S.cfg.features.search) {
+      return Promise.reject(new Error('本地服务是旧进程，检索接口要重启服务'));
+    }
+    return apiGet('/api/search?lookfor=' + encodeURIComponent(lookfor) +
+      '&type=' + type + '&limit=' + PAGE_LIMIT);
   }
 
   /**
@@ -2161,7 +2166,9 @@
             branches: branches,
             places: places,
             meta: {
-              total: res.resultCount || records.length,
+              // HTML 兜底拿不到总条数时给 0：宁可只说「查了 N 个版本」，
+              // 也不把单页条数当成上图的总版本数
+              total: res.resultCount || 0,
               instances: ids.length,
               coverId: ids[0],
               availBranches: availBranches,
