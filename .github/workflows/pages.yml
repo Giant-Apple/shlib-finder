@@ -34,7 +34,13 @@ jobs:
           set -euo pipefail
           mkdir -p _site/download
           cp -R docs/. _site/
-          gh release download --pattern 'shlib-finder-v*.zip' --dir _site/download
+          for i in $(seq 1 12); do
+            if gh release download --repo "$GITHUB_REPOSITORY" \
+                 --pattern 'shlib-finder-v*.zip' --dir _site/download --clobber; then
+              break
+            fi
+            sleep 10
+          done
           cp _site/download/shlib-finder-v*.zip _site/download/shlib-finder-latest.zip
           ls -l _site/download
 

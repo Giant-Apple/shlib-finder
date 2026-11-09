@@ -33,7 +33,7 @@
 
 ### 打包版（Windows，免装 Python）
 
-1. 在 [GitHub 项目主页](https://github.com/Giant-Apple/shlib-finder) 右侧打开 **Releases**，下载 `shlib-finder-v<版本>.zip`（包里自带 Python）。
+1. 打开 [下载链接](https://giant-apple.github.io/shlib-finder/download/shlib-finder-latest.zip) 下载最新 zip（包里自带 Python）。
 2. 解压到任意目录，得到一个 `shlib-finder-<版本>` 文件夹，双击里面的 `start-server.bat`，浏览器会自动打开 <http://127.0.0.1:8765/>。
 3. 用完关掉命令行窗口就是停止；想重开双击 `restart-server.bat`。
 
