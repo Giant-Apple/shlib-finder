@@ -11,6 +11,12 @@
 - 许可全文：`vendor/qrcode-8.2.dist-info/LICENSE`
 - Copyright (c) 2011, Lincoln Loop。项目主页 https://github.com/lincolnloop/python-qrcode
 
+### QR Code Generator for JavaScript 1.4.4（MIT）
+
+- 位置：`ext/vendor/qrcode.js`、`ext/vendor/qrcode_UTF8.js`
+- 用途：扩展侧边栏里把借书单画成本机二维码（纯前端，不发请求）
+- 许可：MIT，Copyright (c) 2009-2011 Kazuhiko Arase。项目主页 https://github.com/kazuhikoarase/qrcode-generator
+
 ## 数据
 
 ### `data/libraries.json`

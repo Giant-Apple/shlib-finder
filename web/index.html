@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>上图馆藏查询 · 按距离查可借</title>
+<title>借得到 · 按距离查可借</title>
 <!-- 浏览器标签页的书本小图标：16/32 给标签页，180 给 iOS 主屏幕 -->
 <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="icon-16.png">
@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="上图馆藏">
+<meta name="apple-mobile-web-app-title" content="借得到">
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14171a">
 <script>
@@ -61,6 +61,11 @@
     </div>
     <button class="rbtn icon-btn" id="geoBtn" title="重新定位" aria-label="重新定位">
       <i data-icon="locate"></i>
+    </button>
+    <!-- 借书单：全局入口，带数量角标。加书在馆藏卡第三行，这里只负责看/改/分享 -->
+    <button class="rbtn icon-btn borrow-btn" id="borrowBtn" title="借书单" aria-label="借书单" hidden>
+      <i data-icon="bookmark"></i>
+      <span class="borrow-count" id="borrowCount" hidden></span>
     </button>
     <!-- 亮色/暗色开关：一颗钮两个状态。图标跟着当前主题换（亮色=太阳，暗色=月亮），
          title 写的是「点了会变成什么」，不是当前状态 -->
@@ -118,19 +123,7 @@
         在其他设备上打开时，设置是只读的：可以查书、查看结果；改设置请回到运行服务的那台电脑。
       </div>
 
-      <!-- 1 地图：宽屏下结果区背后铺不铺地图。手机上地图不铺背景，这项主要给桌面用 -->
-      <div class="grp">地图</div>
-
-      <div class="field">
-        <label>默认展开地图</label>
-        <div class="seg" id="mapSeg">
-          <span class="seg-thumb" aria-hidden="true"></span>
-          <button type="button" data-map-val="1">展开</button>
-          <button type="button" data-map-val="0">收起</button>
-        </div>
-      </div>
-
-      <!-- 2 豆瓣地址：豆列和想读可以只填一个，也可以都填 -->
+      <!-- 豆瓣地址：豆列和想读可以只填一个，也可以都填 -->
       <div class="grp">豆瓣地址</div>
 
       <div class="field">
@@ -156,7 +149,7 @@
         </div>
       </div>
 
-      <!-- 3 地图 API Key -->
+      <!-- 地图 API Key -->
       <div class="grp">地图 API Key</div>
 
       <div class="keybox">
@@ -197,7 +190,7 @@
         </div>
       </div>
 
-      <!-- 4 从其他设备访问：默认关，开启后同一网络里的手机 / 另一台电脑能打开（只读） -->
+      <!-- 从其他设备访问：默认关，开启后同一网络里的手机 / 另一台电脑能打开（只读） -->
       <div class="grp">从其他设备访问</div>
 
       <div class="field last" id="lanField">
@@ -223,7 +216,36 @@
         <div class="lan-note" id="lanHint">其他设备要和这台电脑在同一个网络里；手机就是连同一个 Wi-Fi。</div>
       </div>
 
-      <!-- 5 关于 -->
+      <!-- 电子书资源：默认关。开启后选中某本书时才把它的 ISBN 发给第三方镜像查有无，
+           确认有电子书才在结果页书名旁显示 Z-Library / Anna's Archive 入口；没有就不显示 -->
+      <div class="grp">电子书资源</div>
+
+      <div class="field last" id="availField">
+        <div class="lan-switch">
+          <div class="lan-switch-txt">
+            <label id="availLabel">在结果页书名旁显示电子书入口（Z-Library / Anna's Archive）</label>
+            <div class="stat" id="availStat">未开启</div>
+          </div>
+          <button type="button" class="tgl" id="availToggle" aria-pressed="false"
+                  aria-labelledby="availLabel">
+            <span class="tgl-track"><span class="tgl-knob"></span></span>
+          </button>
+        </div>
+        <div class="avail-opts" id="availOpts" hidden>
+          <label class="mt" for="availDomains">查询镜像（每行一个，任一可用即可，一般不用改）</label>
+          <textarea id="availDomains" rows="3" spellcheck="false"></textarea>
+          <label class="mt" for="availProxy">查询代理（可选，直连查不到时再填）</label>
+          <input id="availProxy" type="text" autocomplete="off" placeholder="http://127.0.0.1:10808">
+          <!-- 官网域名轮换、各网络可达性不同，所以打开地址让用户自己填：填了图标可点，
+               留空则图标只标「有电子书」，不给打不开的死链 -->
+          <label class="mt" for="availZlibBase">Z-Library 打开地址（打不开时换一个，留空只标记）</label>
+          <input id="availZlibBase" type="text" autocomplete="off" placeholder="https://z-library.sk">
+          <label class="mt" for="availAnnaBase">Anna's Archive 打开地址（同上）</label>
+          <input id="availAnnaBase" type="text" autocomplete="off" placeholder="https://annas-archive.gl">
+        </div>
+      </div>
+
+      <!-- 关于 -->
       <div class="grp">关于</div>
 
       <div class="about-row">
@@ -231,7 +253,7 @@
           <a class="icon-btn about-gh" id="homeLink" href="https://github.com/Giant-Apple/shlib-finder"
              target="_blank" rel="noopener noreferrer"
              title="GitHub 项目主页" aria-label="GitHub 项目主页"><i data-icon="github"></i></a>
-          <div class="ver" id="setVer">上图馆藏查询 v—</div>
+          <div class="ver" id="setVer">借得到 v—</div>
         </div>
         <div class="about-acts">
           <!-- 反馈入口直接开 GitHub Issues：本地版没有账号体系，也不收集任何反馈数据 -->
@@ -311,6 +333,43 @@
     <div class="dlg-foot">
       <button type="button" id="addrCancel">取消</button>
       <button type="button" class="primary" id="addrOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 借书单：按分馆分组的待借清单。手机扫码从 #borrow 打开时是同一个对话框，只读 -->
+<div class="dlg borrow-dlg" id="borrowDlg" aria-hidden="true">
+  <div class="dlg-box borrow-box" role="dialog" aria-modal="true" aria-labelledby="borrowTitle">
+    <div class="borrow-head">
+      <div class="borrow-h-main">
+        <h2 id="borrowTitle">借书单</h2>
+        <div class="borrow-sub" id="borrowSub"></div>
+      </div>
+      <button type="button" class="icon-btn sm" id="borrowRefresh"
+              title="刷新借书单" aria-label="刷新借书单"><i data-icon="refresh"></i></button>
+      <button class="x" id="borrowClose" type="button" aria-label="关闭"></button>
+    </div>
+
+    <div class="borrow-body" id="borrowBody"></div>
+
+    <!-- 分享只在电脑上出现：手机已经在看这份清单，再给一个二维码没有意义 -->
+    <div class="borrow-share" id="borrowShareBox" hidden>
+      <button type="button" class="borrow-share-tgl" id="borrowShareTgl" aria-expanded="false">
+        <i data-icon="smartphone"></i><span>分享到手机</span><i data-icon="chevron-down"></i>
+      </button>
+      <div class="borrow-share-body" id="borrowShareBody" hidden>
+        <div class="lan-qr borrow-qr" id="borrowQr" hidden></div>
+        <div class="borrow-share-txt">
+          <div class="lan-url" id="borrowUrl">—</div>
+          <div class="lan-note" id="borrowShareNote"></div>
+          <button type="button" class="sm" id="borrowLanGo" hidden>去设置开启</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="dlg-foot">
+      <button type="button" class="danger-ghost" id="borrowClear" hidden>清空</button>
+      <button type="button" id="borrowDone">关闭</button>
     </div>
   </div>
 </div>

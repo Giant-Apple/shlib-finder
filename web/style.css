@@ -1166,7 +1166,8 @@ html[data-theme="dark"] .empty-state { background: rgba(255, 255, 255, .03); }
   line-height: 1.3;
   font-weight: 600;
 }
-.res-head h1 .ht { flex: 1 1 auto; min-width: 0; }
+/* 书名、作者、出版社都压成单行：超出用省略号，绝不折到第二排把标题区撑高 */
+.res-head h1 .ht { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 外链：跳上图原始页面。用上图官方馆徽，点击后新标签打开 Record 页 */
 .res-head .extlink {
   flex: none;
@@ -1201,7 +1202,23 @@ html[data-theme="dark"] .res-head .extlink img {
 html[data-theme="dark"] .res-head .extlink:hover { background: transparent; }
 html[data-theme="dark"] .res-head .extlink:hover img { background: #eef2f5; }
 
-.res-head .sub { font-size: 12px; color: var(--ink-3); }
+/* 电子书入口：跟馆徽、豆瓣并排在同一簇外链里，复用 .extlink 的尺寸/悬停/焦点样式。
+   官方图标（Z-Library 蓝 Z / Anna's Archive A）走 .extlink img 的 15×15 contain 规则；
+   .avail-slot 为空时 display:none，不占位、不留间隙 */
+.res-head .avail-slot { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.res-head .avail-slot:empty { display: none; }
+/* 没填跳转域名的一枚只作标记：留住图标、不给死链，所以也不给可点的悬停反馈 */
+.res-head .avail-mark { cursor: default; }
+.res-head .avail-mark:hover { background: transparent; }
+html[data-theme="dark"] .res-head .avail-mark:hover img { background: #fff; }
+
+/* 作者 | 出版社 | 年份三格分开排：放不下时先截作者，作者本身再限一个最大宽度，
+   出版社随后让位，年份始终留在行末。每格各带省略号，.sub 的 title 仍是全文 */
+.res-head .sub { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; }
+.res-head .sub-a { flex: 0 1 auto; min-width: 0; max-width: 8em; flex-shrink: 1000; overflow: hidden; text-overflow: ellipsis; }
+.res-head .sub-sep { flex: none; }
+.res-head .sub-p { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.res-head .sub-y { flex: none; }
 
 /* ---------------------------------------------------------------- 豆瓣内容 */
 /*
@@ -2089,7 +2106,7 @@ button.icon-btn.on:hover:not(:disabled) {
 .card .foot-tgl:hover { background: var(--hover); color: var(--ink-2); }
 .card .foot-tgl:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
 .card .foot-tgl .ic { width: 11px; height: 11px; transition: transform .15s; }
-.card .foot.open .foot-tgl .ic { transform: rotate(180deg); }
+.card .foot.open .foot-tgl[data-foot-toggle] .ic { transform: rotate(180deg); }
 /* 内容行：收起时不占位；桌面有 hover 的话，鼠标停在卡上就临时给全（触屏没有 hover，
    靠上面那枚按钮展开）。两条路都不改动数据，只改可见性 */
 .card .foot-body {
@@ -2377,6 +2394,23 @@ html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0
   transition: border-color .14s, box-shadow .14s, background .14s;
 }
 .field input::placeholder { color: var(--ink-3); }
+.field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 13px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color .14s, box-shadow .14s;
+}
+.field textarea::placeholder { color: var(--ink-3); }
+.field textarea:hover { border-color: var(--ink-3); }
+.field textarea:focus { outline: none; border-color: var(--brand); box-shadow: var(--ring); }
+.field textarea.bad { border-color: var(--err); }
 .field input:hover, .select-btn:hover { border-color: var(--ink-3); }
 .field input:focus, .select-btn:focus-visible {
   outline: none;
@@ -2812,6 +2846,281 @@ html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
   .loc { max-width: 140px; }
 }
 
+/* ---------------------------------------------------------------- 借书单 */
+
+/* 第三行：左边「索书号 · 库室」，右边「加入借书单」。两颗钮共用 .foot-tgl 的字号，
+   加入钮靠 margin-left:auto 贴到行尾；没有索书号/库室的馆，行里只剩右边这颗 */
+.card .foot-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.card .borrow-add {
+  margin-left: auto;
+  flex: none;
+  gap: 4px;
+  padding-right: 4px;
+}
+.card .borrow-add .ic { width: 12px; height: 12px; transition: none; }
+.card .borrow-add .ic-on { display: none; }
+.card .borrow-add.on { color: var(--brand); }
+.card .borrow-add.on .ic-add { display: none; }
+.card .borrow-add.on .ic-on { display: block; }
+.card .borrow-add.on:hover { background: var(--brand-soft); color: var(--brand); }
+
+/* 顶栏入口：数量角标挂在圆钮右上，0 条时只留图标 */
+#borrowBtn { position: relative; }
+.borrow-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--brand);
+  color: var(--on-brand);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* 对话框：桌面是一块更高的居中面板；标题、底部按钮钉住，中间清单自己滚 */
+.dlg.borrow-dlg .dlg-box {
+  width: min(560px, 100%);
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 0 0;
+  overflow: hidden;
+}
+.borrow-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 18px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.borrow-h-main { flex: 1 1 auto; min-width: 0; padding-top: 2px; }
+.borrow-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.borrow-sub { margin-top: 2px; font-size: 12px; color: var(--ink-3); }
+.borrow-head .icon-btn { flex: none; color: var(--ink-3); }
+.borrow-head .icon-btn:hover:not(:disabled) { color: var(--ink); }
+
+/* 关闭钮：跟设置面板右上角那个同一套两条交叉线的画法，这里按行内排 */
+.borrow-dlg .x {
+  position: relative;
+  flex: none;
+  width: var(--ctl-sm);
+  height: var(--ctl-sm);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.borrow-dlg .x::before,
+.borrow-dlg .x::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+}
+.borrow-dlg .x::before { transform: translate(-50%, -50%) rotate(45deg); }
+.borrow-dlg .x::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.borrow-dlg .x:hover:not(:disabled) { background: var(--hover-2); color: var(--ink); }
+
+.borrow-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 18px;
+}
+.borrow-empty { padding: 26px 8px 30px; text-align: center; }
+.borrow-empty .be-ico { display: inline-flex; color: var(--ink-3); opacity: .7; }
+.borrow-empty .be-ico .ic { width: 24px; height: 24px; }
+.borrow-empty h3 { margin: 8px 0 4px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+.borrow-empty p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ink-3); }
+
+/* 按馆分组：组头是馆名 + 本数 + 拨号/导航 + 地址，组身是一张连续的清单卡片 */
+.borrow-group + .borrow-group { margin-top: 14px; }
+.borrow-bh {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+  padding: 0 2px 6px;
+}
+.borrow-bh-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.borrow-bname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.borrow-bcount {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.borrow-bacts { flex: none; display: flex; gap: 2px; }
+.borrow-bacts .b-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--ink-3);
+}
+.borrow-bacts .b-ico:hover { background: var(--hover); color: var(--ink-2); }
+.borrow-bacts .ic { width: 14px; height: 14px; }
+.borrow-addr {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.borrow-items {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.borrow-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.borrow-item + .borrow-item { border-top: 1px solid var(--line); }
+.borrow-it-main { flex: 1 1 auto; min-width: 0; }
+.borrow-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.borrow-meta {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.borrow-call-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 6px;
+}
+.borrow-callno {
+  height: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-solid);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.borrow-callno:hover:not(:disabled) {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.borrow-missing { font-size: 11px; color: var(--ink-3); }
+.borrow-rooms {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.borrow-rooms .br-lbl { margin-right: 4px; }
+.borrow-del {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+}
+.borrow-del:hover:not(:disabled) { background: var(--err-soft); color: var(--err); }
+.borrow-del .ic { width: 15px; height: 15px; }
+
+/* 分享到手机：默认收起，展开后左边二维码、右边地址和前提说明 */
+.borrow-share { border-top: 1px solid var(--line); padding: 8px 18px 0; }
+.borrow-share-tgl {
+  height: auto;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.borrow-share-tgl:hover:not(:disabled) { background: none; color: var(--ink); }
+.borrow-share-tgl .ic { width: 14px; height: 14px; }
+.borrow-share-tgl .ic:last-child { width: 12px; height: 12px; transition: transform .15s; }
+.borrow-share-tgl.open .ic:last-child { transform: rotate(180deg); }
+.borrow-share-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 6px 0 12px;
+}
+.borrow-share-body[hidden] { display: none; }
+.borrow-qr { width: 96px; height: 96px; }
+.borrow-share-txt { flex: 1 1 auto; min-width: 0; }
+.borrow-share-txt .lan-note { margin-top: 4px; }
+.borrow-share-txt button { margin-top: 8px; }
+
+.borrow-dlg .dlg-foot {
+  margin-top: 0;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--line);
+}
+button.danger-ghost { border-color: transparent; background: transparent; color: var(--err); }
+button.danger-ghost:hover:not(:disabled) { background: var(--err-soft); }
+button.danger-ghost.armed { background: var(--err); border-color: var(--err); color: #fff; }
+button.danger-ghost.armed:hover:not(:disabled) { background: var(--err); }
+.borrow-dlg .dlg-foot .danger-ghost { margin-right: auto; }
+
 /* ---------------------------------------------------------------- 手机 */
 
 /* 断点 640 跟 app.js 里的 NARROW_W 必须一致：那边靠它默认关地图、选中书后滚到结果。
@@ -2906,6 +3215,19 @@ html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
     border-radius: var(--r-lg) var(--r-lg) 0 0;
     padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
   }
+  /* 借书单：底部升起，清单区吃掉剩余高度；左右留白交给各段自己给 */
+  .dlg.borrow-dlg .dlg-box {
+    max-height: 90vh;
+    padding: 14px 0 0;
+  }
+  .borrow-head { padding: 0 14px 8px; }
+  .borrow-body { padding: 10px 14px; }
+  .borrow-share { padding: 8px 14px 0; }
+  .borrow-dlg .dlg-foot { padding: 8px 14px calc(10px + env(safe-area-inset-bottom)); }
+  .borrow-qr { width: 88px; height: 88px; }
+  /* 触屏点得着：索书号复制钮补到 28 高，移除钮 34 见方 */
+  .borrow-callno { min-height: 28px; }
+  .borrow-del { width: 34px; height: 34px; }
   #toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
 }
 

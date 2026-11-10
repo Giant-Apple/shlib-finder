@@ -1,5 +1,5 @@
 """
-上图馆藏查询 · 本地网页版服务器
+借得到 · 本地网页版服务器
 
 它同时干四件事：
   1. 把 web/ 当静态站点提供（浏览器打开 http://127.0.0.1:8765）
@@ -25,6 +25,7 @@ import hashlib
 import html as _html
 import json
 import os
+import random
 import re
 import socketserver
 import subprocess
@@ -69,6 +70,9 @@ HOLDINGS_TTL = 12 * 3600
 # 设置接口的请求体上限：正常配置不到 1KB，给 64KB 已经很宽松。
 # 不设上限时 Content-Length 由对方声明，局域网里可以拿来把进程内存打满。
 MAX_BODY = 64 * 1024
+# 借书单要整份提交：200 条、每条带书名 / 索书号 / 库室，正常就超过 64KB。
+# 单独给一个上限，不能让它被设置接口那条线挡住。
+BORROW_MAX_BODY = 512 * 1024
 HOLDINGS_WRITES = 0   # 写了多少次，攒够一批清一次过期文件
 SHL_RETRY_TTL = 7 * 24 * 3600   # 上图查不到 record 的书，多久之后再试一次
 
@@ -88,7 +92,14 @@ SEARCH_API_DOWN_UNTIL = [0.0]
 
 # 豆瓣条目详情（其他版本 / 喜欢这本书的人也喜欢 / 高赞短评）已随「豆瓣上的书」模块一起撤掉。
 # 这里只留抓条目页取 ISBN 所需的最小配置（书单补 ISBN 仍走豆瓣）。
-DOUBAN_MIN_GAP = 0.6
+# 2026-11-04 实测 0.6 秒一次、几分钟内就攒出上百次请求仍会撞 IP 级登录墙，
+# 改成 2.5 秒起步再加一点随机抖动：人点得再快也不至于像脚本，日常翻书单仍然够快。
+DOUBAN_MIN_GAP = 2.5
+DOUBAN_GAP_JITTER = 0.8
+# 本地配额：窗口内最多发这么多次。这是程序自己的克制，不是豆瓣封禁——
+# 超了照「暂时受限」回给页面，但不写冷却文件、不提升封禁档位。
+DOUBAN_BUDGET_MAX = 30
+DOUBAN_BUDGET_WINDOW = 10 * 60
 # 书单分页一次抓多少本：25 本 = 豆瓣书单正好一页，一批只发一个请求，
 # 跟普通翻一页没区别；100 本（4 页连发）会落到豆瓣「连续 3-5 页就 403」的区间。
 # 再往后要用户点「继续加载」才抓下一批。
@@ -98,18 +109,42 @@ DOULIST_BATCH = 25
 WISH_BATCH = 15
 # 防失控硬上限：正常豆列远到不了；到了就明确告诉用户「只载入了前 N 本」，不再静默截断
 DOULIST_MAX_BOOKS = 2000
-# 被豆瓣拦截后的冷却时间：期间不再打豆瓣，页面上的重试只会拿回同一句提示
-DOUBAN_BLOCK_COOL = 10 * 60
+# 被豆瓣拦截后的冷却时间：期间不再打豆瓣，页面上的重试只会拿回同一句提示。
+# 连续被挡按 10 分钟 → 1 小时 → 6 小时递增；24 小时没有新拦截才回到第一档。
+# 状态落盘，重启服务不会把冷却清零。
+DOUBAN_BLOCK_STEPS = (10 * 60, 60 * 60, 6 * 60 * 60)
+DOUBAN_BLOCK_RESET = 24 * 60 * 60
+DOUBAN_BLOCK_PATH = os.path.join(DATA_DIR, 'douban-block.json')
 # 「这本书的其他版本」区块（豆瓣详情页）的磁盘缓存：
 #   读到过版本留 30 天；确认这本书没有版本区块只留 7 天（万一是豆瓣改版）
 #   一条都没读到、又不确定 → 不写。写进去就是把这本书锁死，下次一个请求都不发、
 #   照着 30 天前的空结果复述
+# 借书单：这次去图书馆要借的「书 + 分馆 + 索书号」。存服务端而不是 localStorage，
+# 手机扫码后读的才是同一份；写入口只认回环来源，和配置同一道门。
+BORROW_PATH = os.path.join(DATA_DIR, 'borrow.json')
+BORROW_LOCK = threading.Lock()
+BORROW_MAX = 200
+
 VERSIONS_CACHE = os.path.join(DATA_DIR, 'versions-cache.json')
 VERSIONS_TTL = 30 * 24 * 3600
 VERSIONS_ABSENT_TTL = 7 * 24 * 3600
-VERSIONS_MAX = 8          # 区块只给几条预览，多条是兜上限，不给无限抓
-VERSIONS_RETRY_GAP = 0.8  # 没连上的那几条隔一下再打一趟
+VERSIONS_MAX = 4          # 区块只给几条预览，多条是兜上限，不给无限抓
+VERSIONS_RETRY_GAP = 2.0  # 没连上的那几条隔一下再打一趟
 VERSIONS_LOCK = threading.Lock()
+
+# 电子书有无（Z-Library / Anna's Archive）：查的是社区维护的 book-searcher 镜像
+# ——zlib 语料的 JSON 索引，无反爬，按 ISBN 精确查。官网本身有反爬且域名轮换，
+# 服务端硬抓不稳，所以走索引镜像、维护一组域名兜底（任一可用即出结果）。
+# 命中留 30 天；确认没有留 7 天（短一档，万一是某个镜像索引空了导致的假阴性）。
+AVAILABILITY_CACHE = os.path.join(DATA_DIR, 'availability-cache.json')
+AVAILABILITY_TTL = 30 * 24 * 3600
+AVAILABILITY_ABSENT_TTL = 7 * 24 * 3600
+# 缓存格式版本：v1 只存了 Z-Library 书号，没有 md5，拼不出 Anna's 的直达链接。
+# 读到旧条目按未缓存重查一次，补上 md5 后就落 v2，避免每次都重打镜像。
+AVAILABILITY_CACHE_VERSION = 2
+AVAILABILITY_LOCK = threading.Lock()
+AVAILABILITY_TIMEOUT = 8        # 每个镜像的短超时：连不上就换下一个，不拖死整行
+AVAILABILITY_LAST_GOOD = ''     # 上次成功的镜像域名，下次优先打它（锁内读写）
 
 # 公开仓地址只在这里写一次：页面上的「GitHub 项目主页」和更新检测都从它来
 REPO = 'Giant-Apple/shlib-finder'
@@ -178,12 +213,87 @@ EXPOSE_KEY_ON_LAN = False
 
 # 豆瓣图片有防盗链：无 Referer 返 418（14 字节占位图），localhost Referer 返 403，
 # 只有带 douban.com 的 Referer 才给真图。浏览器里改不了 Referer，所以由这一层代取。
-# 取到的图**只放内存**：这条通道只在上图没封面时才走，不是常用资源，不值得往磁盘上摊。
+# 取过的图先放内存；再落一份到磁盘，重启后不用为同一张图重新打豆瓣。
 COVER_HOSTS = ('doubanio.com', 'douban.com')
 COVER_MIN_BYTES = 200   # 小于这个基本就是 418 那张占位图
+COVERS_DIR = os.path.join(DATA_DIR, 'covers')
+COVER_TTL = 7 * 24 * 3600
+COVER_DISK_MAX = 64 << 20
+COVER_WRITES = 0        # 攒够一批清一次过期/超量文件
 COVER_MEM = {}          # 图地址 → (字节, Content-Type)，随进程活
 COVER_MEM_MAX = 8 << 20
 COVER_MEM_BYTES = 0
+COVER_EXT = {
+    'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
+    'image/gif': '.gif', 'image/avif': '.avif',
+}
+COVER_MIME = {v: k for k, v in COVER_EXT.items()}
+
+
+def _cover_path(url):
+    return os.path.join(COVERS_DIR, hashlib.sha1(url.encode('utf-8')).hexdigest() + '.img')
+
+
+def _cover_mime(data):
+    """按文件头认图片类型：磁盘上的缓存只存字节，不另存一份元数据。"""
+    if data[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image/png'
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'image/webp'
+    if data[:6] in (b'GIF87a', b'GIF89a'):
+        return 'image/gif'
+    if data[4:12] == b'ftypavif':
+        return 'image/avif'
+    return ''
+
+
+def _cover_remember(url, data, ctype):
+    global COVER_MEM_BYTES
+    if COVER_MEM_BYTES + len(data) > COVER_MEM_MAX and COVER_MEM:
+        COVER_MEM.clear()
+        COVER_MEM_BYTES = 0
+    COVER_MEM[url] = (data, ctype)
+    COVER_MEM_BYTES += len(data)
+
+
+def covers_cache_sweep(max_age=None, max_size=None):
+    """删过期封面、超量时按最久未用删。和馆藏缓存同一套口径。"""
+    max_age = max_age or COVER_TTL
+    max_size = max_size or COVER_DISK_MAX
+    removed = 0
+    try:
+        now = time.time()
+        files = []
+        total = 0
+        for f in os.scandir(COVERS_DIR):
+            try:
+                st = f.stat()
+                if now - st.st_mtime > max_age:
+                    os.remove(f.path)
+                    removed += 1
+                    continue
+                files.append((st.st_mtime, st.st_size, f.path))
+                total += st.st_size
+            except OSError:
+                pass
+        if total > max_size:
+            files.sort()  # oldest first
+            for mtime, size, path in files:
+                if total <= max_size:
+                    break
+                try:
+                    os.remove(path)
+                    total -= size
+                    removed += 1
+                except OSError:
+                    pass
+    except (FileNotFoundError, NotADirectoryError):
+        return 0
+    if removed:
+        print('封面缓存清理：删掉 %d 个文件' % removed)
+    return removed
 
 def key_visible(loopback_req=False):
     """明文地图 Key 能不能发给浏览器。
@@ -216,6 +326,20 @@ DEFAULT_CONFIG = {
     # 地图显示用的另一把 Key：高德「Web端(JS API)」类型，跟上面 Web 服务那把不通用。
     # 2021-12-02 之后申请的 Key 还要配 security 安全密钥（控制台同一行可见）。
     'map': {'key': '', 'security': ''},
+    # 电子书有无入口：默认关闭。开启后按需把单本 ISBN 发给下面的第三方镜像查有无，
+    # 不上传书单、不带身份；结果落本机缓存。域名是社区维护的 book-searcher 实例，
+    # 会轮换失效，可在设置里改。proxy 可选：本机直连不通时填一个 HTTP 代理地址。
+    # zlibBase/annaBase 是图标点击后跳转的官网：官网域名轮换且各网络环境可达性不同，
+    # 服务端给了两个实测能开的地址，用户可改；清空则该图标只表示「有电子书」、不给死链。
+    # Z-Library 的条目页是 /book/<hash>/<slug>.html，索引里的书号对不上，所以跳它的
+    # ISBN 搜索结果页 /s/<isbn>；Anna's 的 /md5/<hash> 能直接落到条目页。
+    'availability': {
+        'enabled': False,
+        'domains': ['book-searcher.eu.org', 'zlib.knat.network', 'zlib.pseudoyu.com'],
+        'proxy': '',
+        'zlibBase': 'https://z-library.sk',
+        'annaBase': 'https://annas-archive.gl',
+    },
 }
 
 
@@ -238,20 +362,29 @@ GEOCODE_LOCK = threading.RLock()
 # 每条都要「读缓存 → 合并 → 写整文件」，不加锁会互相覆盖。
 EDITIONS_LOCK = threading.RLock()
 
-# 豆瓣请求节流：两次请求的发起时间至少隔 DOUBAN_MIN_GAP 秒。
+# 豆瓣请求节流：两次请求的发起时间至少隔 DOUBAN_MIN_GAP 秒，再加一点随机抖动。
 # 书单翻页和补 ISBN 都走这一道，连续请求很容易触发反爬。
 DOUBAN_GAP_LOCK = threading.Lock()
 DOUBAN_LAST_AT = 0.0
 
+# 本地配额：窗口内已经发过的请求时间点。超了只回「暂时受限」，不写封禁记录。
+DOUBAN_BUDGET_LOCK = threading.Lock()
+DOUBAN_BUDGET = []
+
 # 豆瓣反爬冷却：识别到拦截页后到某个时刻为止不再发请求，避免用户连点「重试」
-# 反而把封禁时间越拖越长。状态只在内存里，重启服务即清空。
+# 反而把封禁时间越拖越长。状态落盘到 data/douban-block.json，重启不清零。
 DOUBAN_BLOCK_LOCK = threading.Lock()
 DOUBAN_BLOCKED_UNTIL = 0.0
+DOUBAN_BLOCK_STATE = {'strikes': 0, 'lastAt': 0.0}
+DOUBAN_BLOCK_LOADED = False
 
-# 补 ISBN 的节奏锁：豆列和想读各跑一个后台线程，如果各睡各的，两个 1 秒/本
-# 叠起来就是 2 次/秒。把「取一本 + 歇一秒」整段放进同一把锁，两个来源合计
-# 仍然最多 1 次/秒，代价是两边轮流补、都慢一点。
+# 补 ISBN 的节奏锁：豆列和想读各跑一个后台线程，把「取一本」串起来，
+# 两个来源不叠着打豆瓣；节流本身由 douban_get 的全局间隔负责。
+# 每个来源每次启动最多补 ISBN_BACKFILL_MAX 本：书单几百本时不再无限续下去。
 ISBN_PACE_LOCK = threading.Lock()
+ISBN_BACKFILL_MAX = 10
+ISBN_ATTEMPTS = {}
+ISBN_ATTEMPTS_LOCK = threading.Lock()
 
 # 更新检测：RUN 锁保证一次只打一个检测（手动连点不叠加），STATE 锁只护结果缓存。
 UPDATE_RUN_LOCK = threading.Lock()
@@ -615,6 +748,27 @@ class DoubanBlocked(RuntimeError):
         self.retry_after = int(retry_after)
 
 
+class DoubanBudget(DoubanBlocked):
+    """本地配额用完：程序主动停手，不是豆瓣封禁。页面照「暂时受限」处理。"""
+
+    def __init__(self, retry_after=0):
+        RuntimeError.__init__(self, '豆瓣请求太频繁，稍后再试')
+        self.retry_after = int(retry_after)
+
+
+class DoubanLoginRequired(DoubanBlocked):
+    """豆瓣要求登录：等冷却也不会好，只能如实报出来。
+
+    继承 DoubanBlocked 是为了让后台线程和调用点按「停手」处理，
+    但 retry_after=0，页面据此显示具体原因而不是冷却倒计时。
+    """
+
+    def __init__(self):
+        RuntimeError.__init__(self, '豆瓣要求登录后才能读取，稍后再试')
+        self.retry_after = 0
+        self.login_required = True
+
+
 class DoubanListError(RuntimeError):
     """列表页本身读不了：私密、地址不存在、页面改版。
 
@@ -639,17 +793,82 @@ class DoubanFormat(DoubanListError):
 
 
 def douban_blocked_for():
-    """冷却还剩多少秒。0 = 现在可以请求。"""
+    """冷却还剩多少秒。0 = 现在可以请求。启动后第一次调用时把落盘状态读回来。"""
+    _ensure_douban_block_loaded()
     with DOUBAN_BLOCK_LOCK:
         return max(0, int(DOUBAN_BLOCKED_UNTIL - time.time()))
 
 
-def _mark_douban_blocked():
-    global DOUBAN_BLOCKED_UNTIL
+def _ensure_douban_block_loaded():
+    global DOUBAN_BLOCKED_UNTIL, DOUBAN_BLOCK_STATE, DOUBAN_BLOCK_LOADED
     with DOUBAN_BLOCK_LOCK:
-        DOUBAN_BLOCKED_UNTIL = max(DOUBAN_BLOCKED_UNTIL, time.time() + DOUBAN_BLOCK_COOL)
-        left = int(DOUBAN_BLOCKED_UNTIL - time.time())
+        if DOUBAN_BLOCK_LOADED:
+            return
+        DOUBAN_BLOCK_LOADED = True
+        try:
+            with open(DOUBAN_BLOCK_PATH, encoding='utf-8') as f:
+                data = json.load(f)
+            DOUBAN_BLOCKED_UNTIL = max(0.0, float(data.get('until') or 0))
+            DOUBAN_BLOCK_STATE = {
+                'strikes': max(0, int(data.get('strikes') or 0)),
+                'lastAt': max(0.0, float(data.get('lastAt') or 0)),
+            }
+        except Exception:
+            pass
+
+
+def _mark_douban_blocked():
+    """记一次拦截并返回异常。连续被挡会拉长冷却，状态写盘，重启仍然有效。"""
+    global DOUBAN_BLOCKED_UNTIL, DOUBAN_BLOCK_STATE
+    _ensure_douban_block_loaded()
+    now = time.time()
+    with DOUBAN_BLOCK_LOCK:
+        if now - DOUBAN_BLOCK_STATE['lastAt'] > DOUBAN_BLOCK_RESET:
+            DOUBAN_BLOCK_STATE['strikes'] = 0
+        strikes = DOUBAN_BLOCK_STATE['strikes'] + 1
+        cool = DOUBAN_BLOCK_STEPS[min(strikes, len(DOUBAN_BLOCK_STEPS)) - 1]
+        DOUBAN_BLOCKED_UNTIL = max(DOUBAN_BLOCKED_UNTIL, now + cool)
+        DOUBAN_BLOCK_STATE = {'strikes': strikes, 'lastAt': now}
+        left = int(DOUBAN_BLOCKED_UNTIL - now)
+        state = {'until': DOUBAN_BLOCKED_UNTIL, 'strikes': strikes, 'lastAt': now}
+    try:
+        atomic_write_json(DOUBAN_BLOCK_PATH, state)
+    except Exception:
+        pass
     return DoubanBlocked(left)
+
+
+# 豆瓣的登录墙：403 或 200 页面里都可能出现。和「有异常请求」的反爬页分开报，
+# 反爬是等冷却，登录墙等再久也不会好。
+LOGIN_WALL_HINTS = ('请登录使用豆瓣', '登录后使用豆瓣', '登录豆瓣后继续',
+                    'accounts.douban.com/passport/login')
+ANTI_SCRAPE_HINTS = ('sec.douban.com', '有异常请求', '禁止访问')
+
+
+def _looks_login_wall(text):
+    return any(x in (text or '') for x in LOGIN_WALL_HINTS)
+
+
+def _douban_budget_wait():
+    now = time.time()
+    with DOUBAN_BUDGET_LOCK:
+        while DOUBAN_BUDGET and now - DOUBAN_BUDGET[0] >= DOUBAN_BUDGET_WINDOW:
+            DOUBAN_BUDGET.pop(0)
+        if len(DOUBAN_BUDGET) >= DOUBAN_BUDGET_MAX:
+            return max(1, int(DOUBAN_BUDGET_WINDOW - (now - DOUBAN_BUDGET[0])))
+        return 0
+
+
+def _douban_budget_take():
+    """占一个配额；满了返回还要等多少秒。"""
+    now = time.time()
+    with DOUBAN_BUDGET_LOCK:
+        while DOUBAN_BUDGET and now - DOUBAN_BUDGET[0] >= DOUBAN_BUDGET_WINDOW:
+            DOUBAN_BUDGET.pop(0)
+        if len(DOUBAN_BUDGET) >= DOUBAN_BUDGET_MAX:
+            return max(1, int(DOUBAN_BUDGET_WINDOW - (now - DOUBAN_BUDGET[0])))
+        DOUBAN_BUDGET.append(now)
+        return 0
 
 
 def douban_get(url, timeout=20, private_hint=False):
@@ -667,30 +886,47 @@ def douban_get(url, timeout=20, private_hint=False):
     left = douban_blocked_for()
     if left > 0:
         raise DoubanBlocked(left)
+    # 配额是程序自己的克制：超了只说「暂时受限」，不冒充豆瓣封禁
+    wait = _douban_budget_wait()
+    if wait > 0:
+        raise DoubanBudget(wait)
     with DOUBAN_GAP_LOCK:
-        wait = DOUBAN_MIN_GAP - (time.time() - DOUBAN_LAST_AT)
+        now = time.time()
+        wait = DOUBAN_MIN_GAP + random.uniform(0, DOUBAN_GAP_JITTER) - (now - DOUBAN_LAST_AT)
         if wait > 0:
             time.sleep(wait)
         DOUBAN_LAST_AT = time.time()
+    wait = _douban_budget_take()
+    if wait > 0:
+        raise DoubanBudget(wait)
+    headers = {'Referer': 'https://www.douban.com/'}
     try:
-        page = http_get(url, timeout=timeout, headers={'Referer': 'https://www.douban.com/'})
+        page = http_get(url, timeout=timeout, headers=headers)
     except urllib.error.HTTPError as e:
         # 403/418/429 都是豆瓣对抓取的明确拒绝，跟拦截页同等处理
         if e.code in (403, 418, 429):
-            if private_hint and e.code == 403:
+            body = ''
+            if e.code == 403:
                 try:
                     body = e.read().decode('utf-8', 'ignore')[:4000]
                 except Exception:
                     body = ''
-                anti = ('有异常请求', 'sec.douban.com', '禁止访问')
+            if private_hint and e.code == 403:
+                anti = ANTI_SCRAPE_HINTS
                 private = ('登录', '仅自己可见', '没有权限')
-                if body and not any(x in body for x in anti) and any(x in body for x in private):
+                if (body and not any(x in body for x in anti)
+                        and not _looks_login_wall(body)
+                        and any(x in body for x in private)):
                     raise DoubanPrivate()
+            if _looks_login_wall(body):
+                raise DoubanLoginRequired()
             raise _mark_douban_blocked()
         raise
     head = page[:4000]
-    if 'sec.douban.com' in head or '有异常请求' in head or '禁止访问' in head:
+    if any(x in head for x in ANTI_SCRAPE_HINTS):
         raise _mark_douban_blocked()
+    if _looks_login_wall(head):
+        raise DoubanLoginRequired()
     return page
 
 
@@ -724,6 +960,8 @@ def isbn_for_subject(raw_url):
         return {'isbn': hit}, 200
     try:
         isbn = fetch_isbn(SUBJECT_URL % sid)
+    except DoubanLoginRequired as e:
+        return {'error': str(e), 'loginRequired': True}, 502
     except DoubanBlocked as e:
         return {'error': str(e), 'blockedFor': e.retry_after}, 502
     if isbn:
@@ -850,6 +1088,8 @@ def _build_versions(page_url):
     """详情页 → 区块那几条 → 逐条读 ISBN。返回 (entry, error)，error 是 (payload, code)。"""
     try:
         page = douban_get(page_url, timeout=25)
+    except DoubanLoginRequired as e:
+        return None, ({'error': str(e), 'loginRequired': True}, 502)
     except DoubanBlocked as e:
         return None, ({'error': str(e), 'blockedFor': e.retry_after}, 502)
     except Exception as e:
@@ -876,6 +1116,8 @@ def _build_versions(page_url):
     for it in items:
         try:
             rows.append(_edition_isbn(it['url']))
+        except DoubanLoginRequired as e:
+            return None, ({'error': str(e), 'loginRequired': True}, 502)
         except DoubanBlocked as e:
             return None, ({'error': str(e), 'blockedFor': e.retry_after}, 502)
     missed = [i for i, r in enumerate(rows) if not r[1]]
@@ -884,6 +1126,8 @@ def _build_versions(page_url):
         for i in missed:
             try:
                 rows[i] = _edition_isbn(items[i]['url'])
+            except DoubanLoginRequired as e:
+                return None, ({'error': str(e), 'loginRequired': True}, 502)
             except DoubanBlocked as e:
                 return None, ({'error': str(e), 'blockedFor': e.retry_after}, 502)
 
@@ -933,6 +1177,205 @@ def versions_for_book(raw_ref):
     if err:
         return err
     return entry, 200
+
+
+# ---------------------------------------------------------------- 电子书有无
+
+def _clean_avail_domain(v):
+    """把用户填的一项收拾成纯主机名：去协议、去路径，只留合法域名字符。
+
+    返回空串表示这项不合法。后面拿它拼 https://<host>/search，主机名限定成
+    [a-z0-9.-] 就不会被塞进路径或别的协议（javascript: 之类）。"""
+    s = re.sub(r'^https?://', '', (v or '').strip(), flags=re.I)
+    s = s.split('/')[0].split('?')[0].split('#')[0].strip().lower()
+    return s if re.fullmatch(r'[a-z0-9.-]+\.[a-z]{2,}', s) else ''
+
+
+def _clean_avail_base(v):
+    """把用户填的跳转官网域名收拾成 https://<host>；空串表示没配。
+
+    官网域名会轮换、各网络可达性也不同，所以不写死。合法性仍按纯主机名校验，
+    拼出来的链接不会被塞进 javascript: 之类的协议或额外路径。"""
+    host = _clean_avail_domain(v)
+    return 'https://' + host if host else ''
+
+
+def _avail_links(av, isbn, md5):
+    """按当前配置拼两个官网的跳转链接，没配的那家给空串。
+
+    Z-Library 的条目地址带它自己的 hash（/book/<hash>/<slug>.html），索引里的书号
+    对不上，所以落到 ISBN 搜索结果页 /s/<isbn>；Anna's 用 md5 能直达条目页，
+    md5 不合法就不给链接，免得拼出个必然 404 的死链。"""
+    av = av or {}
+    zlib_url = ''
+    if isbn:
+        base = _clean_avail_base(av.get('zlibBase'))
+        if base:
+            zlib_url = base + '/s/' + urllib.parse.quote(str(isbn), safe='')
+    anna_url = ''
+    if re.fullmatch(r'[0-9a-fA-F]{32}', str(md5 or '')):
+        base = _clean_avail_base(av.get('annaBase'))
+        if base:
+            anna_url = base + '/md5/' + str(md5)
+    return zlib_url, anna_url
+
+
+def _avail_domains(cfg):
+    """去重后的镜像域名列表，上次成功的那个排最前。一个合法的都没有就回出厂默认。"""
+    av = cfg.get('availability') or {}
+    seen, out = set(), []
+    for d in (av.get('domains') or []):
+        host = _clean_avail_domain(d)
+        if host and host not in seen:
+            seen.add(host)
+            out.append(host)
+    if not out:
+        for d in DEFAULT_CONFIG['availability']['domains']:
+            if d not in seen:
+                seen.add(d)
+                out.append(d)
+    with AVAILABILITY_LOCK:
+        good = AVAILABILITY_LAST_GOOD
+    if good in seen:
+        out.remove(good)
+        out.insert(0, good)
+    return out
+
+
+def _avail_http_get(url, timeout, proxy):
+    """单独给 availability 用的 GET：可选走一个 HTTP 代理。
+
+    不改全局 http_get（别的接口不需要代理，也不该被这里的设置影响）。
+    proxy 为空时用默认 opener（仍会读环境变量里的代理）。"""
+    if proxy:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({'http': proxy, 'https': proxy}))
+    else:
+        opener = urllib.request.build_opener()
+    req = urllib.request.Request(url, headers={
+        'User-Agent': UA, 'Accept': 'application/json'})
+    with opener.open(req, timeout=timeout) as resp:
+        return resp.read().decode('utf-8', 'ignore')
+
+
+def _avail_search(isbn, cfg):
+    """按序打镜像 /search?query=<isbn>，第一个拿到合法 JSON 的就用，记住它。
+
+    返回 (books 列表, 命中的域名)。所有镜像都连不上/解析不了时抛最后一个异常。
+    注意：合法的空结果（books=[]）也算一次成功查询——意思是「这本没有」，
+    不再往下打别的镜像（任一可用即出结果）。"""
+    global AVAILABILITY_LAST_GOOD
+    av = cfg.get('availability') or {}
+    proxy = (av.get('proxy') or '').strip()
+    q = urllib.parse.urlencode({'query': isbn})
+    last = None
+    for host in _avail_domains(cfg):
+        url = 'https://%s/search?%s' % (host, q)
+        try:
+            data = json.loads(_avail_http_get(url, AVAILABILITY_TIMEOUT, proxy))
+            books = data.get('books')
+            if not isinstance(books, list):
+                raise ValueError('响应里没有 books 列表')
+        except Exception as e:
+            last = e
+            continue
+        with AVAILABILITY_LOCK:
+            AVAILABILITY_LAST_GOOD = host
+        return books, host
+    raise last if last else RuntimeError('没有可用的镜像域名')
+
+
+def _pick_avail_book(books, isbn):
+    """从命中里挑一条用来生成深链：优先 ISBN 完全相符、且同时有书号和 md5 的。"""
+    exact = [b for b in books if isinstance(b, dict)
+             and isbn in re.sub(r'[\s-]', '', str(b.get('isbn') or '')).upper().split(',')]
+    pool = exact or [b for b in books if isinstance(b, dict)]
+    for b in pool:
+        if b.get('id') and b.get('md5'):
+            return b
+    for b in pool:
+        if b.get('id') or b.get('md5'):
+            return b
+    return pool[0] if pool else {}
+
+
+def _cached_availability(isbn):
+    with AVAILABILITY_LOCK:
+        hit = (load_json(AVAILABILITY_CACHE, {}).get('books') or {}).get(isbn)
+    if not hit:
+        return None
+    if hit.get('v', 1) < AVAILABILITY_CACHE_VERSION:
+        return None
+    ttl = AVAILABILITY_TTL if hit.get('found') else AVAILABILITY_ABSENT_TTL
+    return hit if time.time() - hit.get('at', 0) < ttl else None
+
+
+def _remember_availability(isbn, entry):
+    with AVAILABILITY_LOCK:
+        cache = load_json(AVAILABILITY_CACHE, {})
+        cache.setdefault('books', {})[isbn] = dict(entry, v=AVAILABILITY_CACHE_VERSION)
+        atomic_write_json(AVAILABILITY_CACHE, cache, indent=1)
+
+
+def availability_for_book(raw_isbn):
+    """这本书在 Z-Library / Anna's Archive 有没有电子书 → (payload, http 码)。
+
+    默认关闭：没开启时一个第三方请求都不发，直接回 found=False（开关在服务端兜底，
+    不信任页面）。开启后按需查单本 ISBN；命中才带跳转链接，没有就 found=False，
+    页面据此隐藏入口图标。所有镜像都连不上时回 failed=True 且不落缓存，下次还能再试。
+
+    缓存只存「有没有」和 md5，不存拼好的链接：跳转域名可在设置里改，读的时候
+    按当前配置和 ISBN 现拼，改完不用等缓存过期就能生效。"""
+    isbn = normalize_isbn(raw_isbn)
+    if not isbn:
+        return {'error': '要 ISBN（10 或 13 位）'}, 400
+    cfg = load_config()
+    av = cfg.get('availability') or {}
+    if not av.get('enabled'):
+        return {'found': False, 'disabled': True}, 200
+    hit = _cached_availability(isbn)
+    if hit:
+        out = dict(hit)
+        out['fromCache'] = True
+        zlib_url, anna_url = _avail_links(av, isbn, out.pop('md5', ''))
+        out['zlib_url'], out['anna_url'] = zlib_url, anna_url
+        return out, 200
+    try:
+        books, host = _avail_search(isbn, cfg)
+    except Exception:
+        # 旧格式缓存还能说明「有」：镜像抖动的这一下别把已有的 Z-Library 入口也弄丢
+        with AVAILABILITY_LOCK:
+            old = (load_json(AVAILABILITY_CACHE, {}).get('books') or {}).get(isbn)
+        if old and old.get('found') and old.get('v', 1) < AVAILABILITY_CACHE_VERSION:
+            out = dict(old)
+            out.pop('v', None)
+            out.pop('book_id', None)
+            out.pop('md5', None)
+            out['fromCache'] = True
+            out['zlib_url'], out['anna_url'] = _avail_links(av, isbn, '')
+            return out, 200
+        return {'found': False, 'failed': True}, 200
+    now = time.time()
+    if not books:
+        entry = {'at': now, 'found': False, 'isbn': isbn}
+        _remember_availability(isbn, entry)
+        return dict(entry), 200
+    book = _pick_avail_book(books, isbn)
+    md5 = str(book.get('md5') or '').strip()
+    entry = {
+        'at': now,
+        'found': True,
+        'isbn': isbn,
+        'title': str(book.get('title') or '').strip()[:200],
+        'extension': str(book.get('extension') or '').strip(),
+        'md5': md5,
+        'source': host,
+    }
+    _remember_availability(isbn, entry)
+    out = dict(entry)
+    out.pop('md5', None)
+    out['zlib_url'], out['anna_url'] = _avail_links(av, isbn, md5)
+    return out, 200
 
 
 def search_html_ids(term, typ, limit, page=1):
@@ -1293,8 +1736,9 @@ def _remember_isbn(sid, isbn):
 
 
 def _isbn_worker(url):
-    """后台补 ISBN：一本一本查（1s/本），每 5 本合并回缓存。
-    撞上豆瓣拦截立刻停（冷却期内不再发请求），已经补到的先落盘。"""
+    """后台补 ISBN：一本一本查（间隔由 douban_get 统一管），每 5 本合并回缓存。
+    每个来源每次启动最多补 ISBN_BACKFILL_MAX 本；撞上拦截或登录墙立刻停，
+    已经补到的先落盘。"""
     filled = {}
 
     def flush():
@@ -1323,14 +1767,20 @@ def _isbn_worker(url):
                 flush()
                 return
             for b in pending:
+                with ISBN_ATTEMPTS_LOCK:
+                    used = ISBN_ATTEMPTS.get(url, 0)
+                    if used >= ISBN_BACKFILL_MAX:
+                        flush()
+                        return
+                    ISBN_ATTEMPTS[url] = used + 1
                 try:
-                    # 豆列和想读各有一个 worker：把「取一本 + 歇一秒」整段锁住，
-                    # 两个来源合计仍是最多 1 次/秒，不会叠成 2 次/秒去撞反爬
+                    # 两个来源共用一把锁：同一时刻只有一个详情页在飞，
+                    # 真正的间隔交给 douban_get 的全局节流
                     with ISBN_PACE_LOCK:
-                        try:
-                            isbn = fetch_isbn(b['url'])
-                        finally:
-                            time.sleep(1.0)
+                        isbn = fetch_isbn(b['url'])
+                except DoubanLoginRequired:
+                    flush()
+                    return
                 except DoubanBlocked:
                     flush()
                     return
@@ -1499,6 +1949,8 @@ def load_doulist(raw_url, refresh=False, more=False, ttl=12 * 3600, with_isbn=Tr
         page_url = cursor if kind == 'wish' else _doulist_page_url(url, start)
         try:
             page = douban_get(page_url, timeout=25, private_hint=(kind == 'wish'))
+        except DoubanLoginRequired:
+            raise
         except DoubanBlocked as e:
             blocked_for = e.retry_after
             break
@@ -1592,6 +2044,114 @@ def load_json(path, default):
         return json.load(open(path, encoding='utf-8'))
     except Exception:
         return default
+
+
+# ---------------------------------------------------------------- 借书单
+
+def _borrow_text(v, limit):
+    """借书单字段统一收拾成去空白、限长的字符串；对象/数组一律不当文字用。"""
+    if isinstance(v, (dict, list, tuple)):
+        return ''
+    if v is None:
+        return ''
+    return str(v).strip()[:limit]
+
+
+def _borrow_coord(v):
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    return n if -1e9 < n < 1e9 else None
+
+
+def _borrow_stamp(v):
+    """加入时间（毫秒时间戳）。跟坐标分开：1700000000000 比坐标的量级大得多。"""
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return 0
+    return n if 0 < n < 10 ** 15 else 0
+
+
+def clean_borrow_items(items):
+    """只留下能落到手机页面上的字段，顺便挡住异常大的请求。
+
+    借书单是纯个人清单，不需要信任客户端：标题和分馆缺一不可，索书号/库室
+    去重后各留 12 条，单条记录限长；超出的条目直接丢掉，不把整个文件写坏。
+    """
+    out = []
+    seen = set()
+    if not isinstance(items, list):
+        return out
+    for raw in items[:BORROW_MAX]:
+        if not isinstance(raw, dict):
+            continue
+        title = _borrow_text(raw.get('title'), 200)
+        branch = _borrow_text(raw.get('branch'), 120)
+        if not title or not branch:
+            continue
+        callnos, rooms = [], []
+        if isinstance(raw.get('callnos'), list):
+            for c in raw['callnos'][:12]:
+                c = _borrow_text(c, 120)
+                if c and c not in callnos:
+                    callnos.append(c)
+        if isinstance(raw.get('rooms'), list):
+            for r in raw['rooms'][:12]:
+                r = _borrow_text(r, 80)
+                if r and r not in rooms:
+                    rooms.append(r)
+        item = {
+            'id': _borrow_text(raw.get('id'), 64),
+            'bookKey': _borrow_text(raw.get('bookKey'), 300),
+            'title': title,
+            'author': _borrow_text(raw.get('author'), 200),
+            'isbn': _borrow_text(raw.get('isbn'), 20),
+            'branchKey': _borrow_text(raw.get('branchKey'), 160),
+            'branch': branch,
+            'callnos': callnos,
+            'rooms': rooms,
+            'address': _borrow_text(raw.get('address'), 300),
+            'tel': _borrow_text(raw.get('tel'), 40),
+            'lat': _borrow_coord(raw.get('lat')),
+            'lng': _borrow_coord(raw.get('lng')),
+            'addedAt': _borrow_stamp(raw.get('addedAt')),
+        }
+        if not item['id']:
+            item['id'] = hashlib.sha1(
+                ('%s|%s|%s' % (title, branch, time.time_ns())).encode('utf-8')
+            ).hexdigest()[:16]
+        if not item['bookKey']:
+            item['bookKey'] = item['isbn'] or title
+        if not item['branchKey']:
+            item['branchKey'] = branch
+        # 同一本 + 同一馆只留一条：前端会拦，服务端也要拦住重复提交
+        pair = (item['bookKey'], item['branchKey'])
+        if pair in seen:
+            continue
+        seen.add(pair)
+        out.append(item)
+    return out
+
+
+def load_borrow():
+    data = load_json(BORROW_PATH, {})
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        updated = float(data.get('updatedAt') or 0)
+    except (TypeError, ValueError):
+        updated = 0
+    return {'items': clean_borrow_items(data.get('items') or []), 'updatedAt': updated}
+
+
+def save_borrow(items):
+    clean = clean_borrow_items(items)
+    data = {'items': clean, 'updatedAt': time.time()}
+    with BORROW_LOCK:
+        atomic_write_json(BORROW_PATH, data)
+    return data
 
 
 # 上海的判断：行政编码 31 开头最准，上游没给 adcode 时退到经纬度方框
@@ -1806,6 +2366,18 @@ LAN_BOUND = False
 HTTPD = None            # 当前这个监听实例；换监听地址时整体替换
 STOP = threading.Event()   # 主线程靠它挂住（serve_forever 挪到了后台线程）
 LAN = {'on': False, 'url': '', 'qr': ''}
+# 借书单的二维码跟「首页二维码」不是同一个地址（要带 #borrow），分开缓存
+BORROW_LAN = {'url': '', 'qr': ''}
+
+
+def qr_svg(text):
+    """把一段文字画成 SVG 二维码；qrcode 库缺失时返回空串，调用方只显示地址。"""
+    try:
+        import qrcode, qrcode.image.svg
+        img = qrcode.make(text, image_factory=qrcode.image.svg.SvgPathImage, border=2)
+        return img.to_string().decode('utf-8')
+    except Exception:
+        return ''
 
 
 def lan_ip():
@@ -1839,15 +2411,31 @@ def build_lan_info():
                 'error': '没找到本机内网地址'}
     if LAN.get('url') == url and LAN.get('qr'):
         return dict(LAN, enabled=enabled, local=local)
-    qr = ''
-    try:
-        import qrcode, qrcode.image.svg
-        img = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=2)
-        qr = img.to_string().decode('utf-8')
-    except Exception:
-        pass
-    LAN.update({'on': True, 'url': url, 'qr': qr})
+    LAN.update({'on': True, 'url': url, 'qr': qr_svg(url)})
     return dict(LAN, enabled=enabled, local=local)
+
+
+def borrow_share():
+    """借书单分享到手机的地址和二维码。
+
+    二维码指向首页的 #borrow，手机打开后由前端自动弹出借书单；地址现算，
+    换 WiFi / DHCP 换 IP 后跟着变。局域网没开时返回 on=False，前端据此
+    说明原因，不画一个扫了也连不上的码。
+    """
+    cfg = load_config()
+    enabled = bool(cfg.get('lan'))
+    local = LISTEN_LOCAL
+    if not enabled or not LAN_BOUND:
+        return {'on': False, 'enabled': enabled, 'local': local, 'url': '', 'qr': ''}
+    try:
+        url = 'http://%s:%d/#borrow' % (lan_ip(), PORT)
+    except Exception:
+        return {'on': False, 'enabled': enabled, 'local': local, 'url': '', 'qr': '',
+                'error': '没找到本机内网地址'}
+    if BORROW_LAN.get('url') == url and BORROW_LAN.get('qr'):
+        return dict(BORROW_LAN, on=True, enabled=enabled, local=local)
+    BORROW_LAN.update({'url': url, 'qr': qr_svg(url)})
+    return dict(BORROW_LAN, on=True, enabled=enabled, local=local)
 
 
 def _bind(host, port):
@@ -1960,6 +2548,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.api_config()
         if path == '/api/lan-qr':
             return self.json(build_lan_info())
+        if path == '/api/borrow':
+            return self.api_borrow()
         if path == '/api/venues':
             return self.api_venues()
         if path == '/api/doulist':
@@ -1972,6 +2562,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self.api_search()
         if path == '/api/versions':
             payload, code = versions_for_book(self.query().get('book', ''))
+            return self.json(payload, code)
+        if path == '/api/availability':
+            payload, code = availability_for_book(self.query().get('isbn', ''))
             return self.json(payload, code)
         if path == '/api/isbn':
             payload, code = isbn_for_subject(self.query().get('url', ''))
@@ -1992,6 +2585,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.proxy(post=True)
         if path == '/api/config':
             return self.api_save_config()
+        if path == '/api/borrow':
+            return self.api_save_borrow()
         if path == '/api/update-check':
             if not self.write_ok():
                 return self.deny_write()
@@ -2013,14 +2608,14 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def body(self, json_only=False):
+    def body(self, json_only=False, limit=MAX_BODY):
         """读取请求体。json_only=True 时只接受 JSON，解析失败返回 None；
         False 时 fallback 到表单解析（兼容旧客户端）。"""
         try:
             n = int(self.headers.get('Content-Length') or 0)
         except ValueError:
             return None
-        if n < 0 or n > MAX_BODY:
+        if n < 0 or n > limit:
             return None
         raw = self.rfile.read(n) if n else b''
         if not raw:
@@ -2135,6 +2730,8 @@ class Handler(SimpleHTTPRequestHandler):
                 'search': True,
                 'isbn': True,
                 'versions': True,
+                'availability': True,
+                'borrow': True,
             },
             # 开关的值和「本次进程实际有没有监听局域网」是两回事：拨完开关就地换监听地址
             # （见 apply_lan_binding），所以正常情况下这两个值一保存就一致；
@@ -2144,6 +2741,46 @@ class Handler(SimpleHTTPRequestHandler):
                 'active': LAN_BOUND,
                 'local': LISTEN_LOCAL,
             },
+            # 电子书有无：开关值给所有来源（手机也要据此画图标）；镜像域名、代理和
+            # 跳转官网都只给回环来源——局域网只读设备没必要看到本机配的代理地址
+            'availability': {
+                'enabled': bool((cfg.get('availability') or {}).get('enabled')),
+                'domains': ((cfg.get('availability') or {}).get('domains') or []) if peer_local else [],
+                'proxy': ((cfg.get('availability') or {}).get('proxy') or '') if peer_local else '',
+                'zlibBase': ((cfg.get('availability') or {}).get('zlibBase') or '') if peer_local else '',
+                'annaBase': ((cfg.get('availability') or {}).get('annaBase') or '') if peer_local else '',
+            },
+        })
+
+    def api_borrow(self):
+        """借书单：本机拿到完整数据 + 分享二维码，局域网设备只读拿到清单。"""
+        data = load_borrow()
+        peer_local = self.is_loopback_req()
+        payload = {
+            'items': data['items'],
+            'updatedAt': data['updatedAt'],
+            'readOnly': not peer_local,
+        }
+        if peer_local:
+            payload['share'] = borrow_share()
+        self.json(payload)
+
+    def api_save_borrow(self):
+        """整份覆盖借书单。写入口和改配置同一道门：只认回环 + 同源头。"""
+        if not self.write_ok():
+            return self.deny_write()
+        body = self.body(json_only=True, limit=BORROW_MAX_BODY)
+        if body is None or not isinstance(body, dict) or not isinstance(body.get('items'), list):
+            return self.json({'error': '借书单格式不对，或一次提交的条目太多'}, 400)
+        try:
+            data = save_borrow(body['items'])
+        except Exception as e:
+            return self.json({'error': '借书单保存失败：%s' % e}, 500)
+        self.json({
+            'items': data['items'],
+            'updatedAt': data['updatedAt'],
+            'readOnly': False,
+            'share': borrow_share(),
         })
 
     def api_restart(self):
@@ -2244,6 +2881,47 @@ class Handler(SimpleHTTPRequestHandler):
                         cur[k] = v
                 if section == 'geocode' and cur.get('provider') not in ('amap', 'qq'):
                     raise ValueError('Web 服务只能是 amap 或 qq')
+            field = ''
+            if 'availability' in body:
+                field = 'availability'
+                part = body['availability']
+                if not isinstance(part, dict):
+                    raise ValueError('availability 必须是对象')
+                cur = cfg.setdefault('availability', {})
+                if 'enabled' in part:
+                    if not isinstance(part['enabled'], bool):
+                        raise ValueError('enabled 必须是布尔值')
+                    cur['enabled'] = part['enabled']
+                if 'proxy' in part:
+                    cur['proxy'] = take_str(part, 'proxy', 512) or ''
+                # 跳转域名填错要指到它自己那一格，不能笼统标到镜像域名上
+                for key in ('zlibBase', 'annaBase'):
+                    if key not in part:
+                        continue
+                    field = 'availability.' + key
+                    raw = take_str(part, key, 256)
+                    if not raw:
+                        cur[key] = ''
+                        continue
+                    if not _clean_avail_domain(raw):
+                        raise ValueError('不是合法域名：%s' % raw[:80])
+                    cur[key] = _clean_avail_base(raw)
+                field = 'availability'
+                if 'domains' in part:
+                    if not isinstance(part['domains'], list):
+                        raise ValueError('domains 必须是列表')
+                    clean = []
+                    for d in part['domains']:
+                        if not isinstance(d, str):
+                            raise ValueError('域名必须是字符串')
+                        host = _clean_avail_domain(d)
+                        if not host:
+                            raise ValueError('域名不合法：%s' % d.strip()[:80])
+                        if host not in clean:
+                            clean.append(host)
+                    if not clean:
+                        raise ValueError('至少要留一个域名')
+                    cur['domains'] = clean[:12]
         except ValueError as e:
             err = {'error': str(e)}
             if field:
@@ -2273,14 +2951,14 @@ class Handler(SimpleHTTPRequestHandler):
         } for v in venues if (v.get('name') or '').strip()]})
 
     def api_cover(self):
-        """代理豆瓣封面图，只在内存里留一份。
+        """代理豆瓣封面图：先内存、再磁盘，最后才去豆瓣取。
 
         豆瓣图片的防盗链按 Referer 判：无 Referer → 418 占位图，localhost → 403，
         只有 douban.com 才放行。浏览器里没法伪造 Referer，所以这一层代取。
-        这个是**回落通道**：上图有封面时前端根本不会走到这里，所以它不是常用资源，
-        写进 data/covers 只是把一次性代取的图长期摊在磁盘上。进程内存里存着够本进程反复用，
-        重启后哪张还需要就再取一次（一张图几十 KB、一次请求）。
+        这条通道只在上图没封面时才走，取到的图落 data/covers/ 留 7 天，
+        重启后不用为同一张图再打一次豆瓣。
         """
+        global COVER_WRITES
         u = self.query().get('u', '').strip()
         if not u:
             return self.json({'error': '缺少 u 参数'}, 400)
@@ -2294,6 +2972,22 @@ class Handler(SimpleHTTPRequestHandler):
         hit = COVER_MEM.get(u)
         if hit:
             return self.send_image(hit[0], hit[1])
+
+        path = _cover_path(u)
+        try:
+            if time.time() - os.path.getmtime(path) <= COVER_TTL:
+                with open(path, 'rb') as f:
+                    data = f.read()
+                if len(data) >= COVER_MIN_BYTES:
+                    ctype = _cover_mime(data) or 'image/jpeg'
+                    _cover_remember(u, data, ctype)
+                    try:
+                        os.utime(path)   # 命中即刷新，让 LRU 按「最近用过」淘汰
+                    except OSError:
+                        pass
+                    return self.send_image(data, ctype, cache=True)
+        except OSError:
+            pass
 
         try:
             req = urllib.request.Request(u, headers={
@@ -2309,20 +3003,23 @@ class Handler(SimpleHTTPRequestHandler):
 
         if len(data) < COVER_MIN_BYTES:
             return self.json({'error': '豆瓣没给真图（可能已下架）'}, 404)
+        ctype = _cover_mime(data) or ctype
         if ctype and not ctype.startswith('image/'):
             return self.json({'error': '返回的不是图片'}, 502)
 
-        # 满了先丢最早放进去的：书单翻来覆去就那几十本，8MB 够放一百多张
-        # 注意：这里要给模块级变量重新赋值，必须 global，否则 Python 把
-        # COVER_MEM_BYTES 当成局部变量，读到第 738 行就 UnboundLocalError
-        # ——每取一张封面就抛一次，线程里堆栈一路冒到 socketserver。
-        global COVER_MEM_BYTES
-        if COVER_MEM_BYTES + len(data) > COVER_MEM_MAX and COVER_MEM:
-            COVER_MEM.clear()
-            COVER_MEM_BYTES = 0
-        COVER_MEM[u] = (data, ctype)
-        COVER_MEM_BYTES += len(data)
-        self.send_image(data, ctype, cache=True)
+        _cover_remember(u, data, ctype or 'image/jpeg')
+        try:
+            os.makedirs(COVERS_DIR, exist_ok=True)
+            tmp = '%s.%d.%d.tmp' % (path, os.getpid(), threading.get_ident())
+            with open(tmp, 'wb') as f:
+                f.write(data)
+            os.replace(tmp, path)
+            COVER_WRITES += 1
+            if COVER_WRITES % 50 == 0:
+                covers_cache_sweep()
+        except OSError:
+            pass
+        self.send_image(data, ctype or 'image/jpeg', cache=True)
 
     def send_image(self, data, ctype=None, cache=True):
         if not ctype:
@@ -2351,6 +3048,8 @@ class Handler(SimpleHTTPRequestHandler):
             data = load_doulist(url, kind=kind,
                                 refresh=q.get('refresh') in ('1', 'true'),
                                 more=q.get('more') in ('1', 'true'))
+        except DoubanLoginRequired as e:
+            return self.json({'error': str(e), 'loginRequired': True}, 502)
         except DoubanBlocked as e:
             return self.json({'error': str(e), 'blockedFor': e.retry_after}, 502)
         except ValueError as e:
@@ -2613,6 +3312,7 @@ def main():
     PORT = args.port
     # 启动时清一次过期缓存：平时只写不删，目录会一直涨
     holdings_cache_sweep()
+    covers_cache_sweep()
     cfg = load_config()
     lan = bool(cfg.get('lan')) and not args.local
     host = '0.0.0.0' if lan else '127.0.0.1'
@@ -2633,7 +3333,7 @@ def main():
 
     url = 'http://127.0.0.1:%d/' % args.port
     # 版本号不在这里打印：页面只认设置面板底部那一处，免得两处显示不一致
-    print('上图馆藏查询已启动：%s' % url)
+    print('借得到已启动：%s' % url)
     print('监听 %s：%s' % (host, '其他设备可访问（只读，同一网络里都能打开）' if lan else '仅本机'))
     LAN_BOUND = lan
     if lan:

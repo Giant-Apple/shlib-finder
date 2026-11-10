@@ -124,7 +124,12 @@
       '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />',
     // 馆评分的只读标记（本地版只画这一枚，可点的版本在扩展里）
     'thumbs-up': '<path d="M7 10v12" /> <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 ' +
-      '17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />'
+      '17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />',
+    // 借书单：顶栏入口用书签，卡片加入用书签 + 加号（Lucide 原样路径）
+    bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />',
+    'bookmark-plus': '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" /> ' +
+      '<path d="M12 7v6" /> <path d="M9 10h6" />',
+    smartphone: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2" /> <path d="M12 18h.01" />'
   };
 
   // 生成一个图标。<i> 是 Lucide 的线描风格：不填充、描边走 currentColor。
@@ -179,14 +184,13 @@
     update: null,     // 最近一次「检查更新」的结果：按钮文案按它画
     activeId: null,
     spot: null,
-    filter: 'avail',
+    filter: 'avail', // 结果视图三档：now（此刻营业中）/ avail（有在架册）/ all（全部馆藏）。默认可借，今日闭馆也列出
     q: '',           // 结果内筛选：只按馆名，切书时清空
     results: {},     // id -> {places, meta}
     cache: {},       // id -> {at, payload}
     busy: {},        // id -> true
     ride: {},        // "from|to" -> {bike, bikeKm}
     showAll: false,
-    onlyOpen: false,  // 「营业中」默认关：只看可借 = 有在架册，今日闭馆的也照样列出来（卡片上有标注）
     mapOn: true,      // 结果区是否显示地图（用户可折叠，记在 localStorage）
     mapView: null,    // 上次的 {center, zoom}：重绘时沿用视野，避免切筛选时视角乱跳
     mapShown: [],     // 当前列表里画在地图上的那批分馆（手机全屏地图用同一批）
@@ -198,14 +202,24 @@
     // 豆瓣版本清单（/api/versions）的内存缓存：键是条目 id 或 ISBN，
     // 值 { at, data, busy, err }。结果页那一行「本书其他版本」读它
     vers: {},
+    // 电子书有无（/api/availability）的内存缓存：键是 ISBN，值 { data } 或 { busy }。
+    // 书架行滚进视野才按需查；命中才画 zlib/anna 入口，没有就空着（不占位、不暗示）
+    avail: {},
     // 渐进披露的两处展开态（都不落盘，刷新即回收）：
-    //   versOpen: 书 id -> 是否展开「本书其他版本」列表（默认收起，只留一行「N 个」）
+    //   versOpen: 书 id -> 是否展开「本书其他版本」列表（默认收起，只留一颗胶囊，点开才抓）
     //   footOpen: 馆名 -> 是否展开卡片第三行（索书号 / 库室）
     versOpen: {},
     footOpen: {},
     lanInfo: null,    // /api/lan-qr 的最近结果：设置面板的开关和二维码都按它画
     // 馆评分：云端聚合快照。ok=false 时整块不画（读不到就不暗示有这项数据）
-    ratings: { ok: false, libs: {}, at: 0 }
+    ratings: { ok: false, libs: {}, at: 0 },
+    // 借书单：这次去图书馆要借的「书 + 分馆 + 索书号」。存服务端，手机扫码读同一份。
+    // items 是服务端清洗后的完整清单；share 只在回环来源给（含二维码）。
+    borrow: { items: [], updatedAt: 0, loaded: false, loading: false, err: '', share: null, readOnly: false },
+    borrowOpen: false,
+    borrowShareOpen: false,
+    borrowClearArm: 0,   // 清空要按两次：第一次只把按钮改成「再点一次清空」
+    borrowSaving: false
   };
 
   // ---------------------------------------------------------------- 工具
@@ -329,6 +343,493 @@
     delete S.results[book.id];
     selectBook(book.id);
     return { book: book, existed: false };
+  }
+
+  // ---------------------------------------------------------------- 借书单
+
+  // 一条记录 = 一本书 + 一家馆 + 这家馆的索书号/库室。存服务端（data/borrow.json），
+  // 手机扫码读的才是同一份；localStorage 只在本机浏览器里，分享不出去。
+  var BORROW_MAX = 200;
+  var borrowPending = null;
+
+  function borrowBookKey(book) {
+    var isbn = compactIsbn(book && book.isbn);
+    if (isbn) return 'i:' + isbn;
+    return 't:' + String((book && book.title) || '').trim() + '|' +
+      String((book && book.author) || '').trim();
+  }
+
+  function borrowBranchKey(p) {
+    return String((p && (p.name || p.display)) || '');
+  }
+
+  function borrowEntryKey(book, p) {
+    return borrowBookKey(book) + '|' + borrowBranchKey(p);
+  }
+
+  function borrowFind(book, p) {
+    var key = borrowEntryKey(book, p);
+    var items = S.borrow.items;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].bookKey + '|' + items[i].branchKey === key) return items[i];
+    }
+    return null;
+  }
+
+  function borrowHasKey(key) {
+    var items = S.borrow.items;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].bookKey + '|' + items[i].branchKey === key) return true;
+    }
+    return false;
+  }
+
+  function borrowEntryFrom(book, p) {
+    return {
+      id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      bookKey: borrowBookKey(book),
+      title: book.title || '',
+      author: book.author || '',
+      isbn: compactIsbn(book.isbn),
+      branchKey: borrowBranchKey(p),
+      branch: p.display || p.name || '',
+      callnos: (p.callnos || []).slice(0, 12),
+      rooms: (p.rooms || []).slice(0, 12),
+      address: p.address || '',
+      tel: p.tel || '',
+      lat: p.lat == null ? null : p.lat,
+      lng: p.lng == null ? null : p.lng,
+      addedAt: Date.now()
+    };
+  }
+
+  function paintBorrowBadge() {
+    var btn = $('borrowBtn');
+    if (!btn) return;
+    var show = !!(S.cfg && S.cfg.features && S.cfg.features.borrow);
+    btn.hidden = !show;
+    if (!show) return;
+    var n = S.borrow.items.length;
+    var c = $('borrowCount');
+    if (c) {
+      c.hidden = n === 0;
+      c.textContent = n > 99 ? '99+' : String(n);
+    }
+    btn.title = n ? '借书单（' + n + ' 本）' : '借书单';
+    btn.setAttribute('aria-label', n ? '借书单，' + n + ' 本' : '借书单');
+  }
+
+  // 结果区重绘后卡片上的按钮是新的；清单变化时把已有按钮的选中态同步过去，
+  // 不重绘整列（重绘会丢滚动位置和地图视角）
+  function syncBorrowButtons() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-borrow-key]'), function (b) {
+      var on = borrowHasKey(b.getAttribute('data-borrow-key'));
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.title = on ? '已在借书单，点击移除' : '加入借书单';
+      b.setAttribute('aria-label', on ? '已在借书单，点击移除' : '加入借书单');
+      var lbl = b.querySelector('.borrow-add-lbl');
+      if (lbl) lbl.textContent = on ? '已在借书单' : '加入借书单';
+    });
+  }
+
+  function borrowBranchCount(items) {
+    var seen = {}, n = 0;
+    (items || []).forEach(function (it) {
+      if (!seen[it.branchKey]) { seen[it.branchKey] = 1; n++; }
+    });
+    return n;
+  }
+
+  // 保存串行：连点两张卡时，后一次请求不能和前一次赛跑，
+  // 否则先发的响应可能把后加的那条盖掉
+  var borrowSaveSeq = 0;
+  var borrowSaveChain = Promise.resolve();
+
+  function persistBorrow(prev, okMsg) {
+    var seq = ++borrowSaveSeq;
+    var payload = S.borrow.items.slice();
+    borrowSaveChain = borrowSaveChain.then(function () {
+      return apiPost('/api/borrow', { items: payload });
+    }).then(function (j) {
+      if (seq !== borrowSaveSeq) return;
+      S.borrow.items = Array.isArray(j.items) ? j.items : S.borrow.items;
+      S.borrow.updatedAt = j.updatedAt || 0;
+      S.borrow.share = j.share || S.borrow.share;
+      S.borrow.err = '';
+      paintBorrowBadge();
+      syncBorrowButtons();
+      if (S.borrowOpen) renderBorrow();
+      if (okMsg) toast(okMsg, 'ok');
+    }, function (e) {
+      if (seq !== borrowSaveSeq) return;
+      S.borrow.items = prev;
+      paintBorrowBadge();
+      syncBorrowButtons();
+      if (S.borrowOpen) renderBorrow();
+      toast('借书单没保存：' + ((e && e.message) || '请稍后重试'), 'err');
+    });
+    return borrowSaveChain;
+  }
+
+  function toggleBorrow(book, p) {
+    if (!book || !p) return;
+    if (S.cfg && S.cfg.readOnly) {
+      toast('从其他设备打开时只能查看借书单', 'err');
+      return;
+    }
+    if (!(S.cfg && S.cfg.features && S.cfg.features.borrow)) {
+      toast('本地服务是旧版本：重启服务后再用借书单', 'err');
+      return;
+    }
+    var prev = S.borrow.items.slice();
+    var idx = -1;
+    for (var i = 0; i < S.borrow.items.length; i++) {
+      if (S.borrow.items[i].bookKey + '|' + S.borrow.items[i].branchKey === borrowEntryKey(book, p)) {
+        idx = i;
+        break;
+      }
+    }
+    var removed = idx >= 0 ? S.borrow.items[idx] : null;
+    if (idx >= 0) {
+      S.borrow.items.splice(idx, 1);
+    } else {
+      if (S.borrow.items.length >= BORROW_MAX) {
+        toast('借书单最多 ' + BORROW_MAX + ' 条', 'err');
+        return;
+      }
+      S.borrow.items.push(borrowEntryFrom(book, p));
+    }
+    paintBorrowBadge();
+    syncBorrowButtons();
+    if (S.borrowOpen) renderBorrow();
+    persistBorrow(prev, removed
+      ? '已从借书单移除《' + removed.title + '》'
+      : '已加入借书单');
+  }
+
+  function removeBorrowItem(id) {
+    var idx = -1;
+    for (var i = 0; i < S.borrow.items.length; i++) {
+      if (S.borrow.items[i].id === id) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    var prev = S.borrow.items.slice();
+    var it = S.borrow.items.splice(idx, 1)[0];
+    paintBorrowBadge();
+    syncBorrowButtons();
+    renderBorrow();
+    persistBorrow(prev, '已移除《' + it.title + '》');
+  }
+
+  function loadBorrow() {
+    if (!(S.cfg && S.cfg.features && S.cfg.features.borrow)) return Promise.resolve(S.borrow);
+    if (borrowPending) return borrowPending;
+    S.borrow.loading = true;
+    borrowPending = apiGet('/api/borrow').then(function (j) {
+      S.borrow.items = Array.isArray(j.items) ? j.items : [];
+      S.borrow.updatedAt = j.updatedAt || 0;
+      S.borrow.readOnly = !!j.readOnly;
+      S.borrow.share = j.share || null;
+      S.borrow.err = '';
+      S.borrow.loaded = true;
+      paintBorrowBadge();
+      syncBorrowButtons();
+      if (S.borrowOpen) renderBorrow();
+      return S.borrow;
+    }).catch(function (e) {
+      S.borrow.err = (e && e.message) || '读不到借书单';
+      if (S.borrowOpen) renderBorrow();
+      throw e;
+    }).then(function (v) {
+      S.borrow.loading = false;
+      borrowPending = null;
+      return v;
+    }, function (e) {
+      S.borrow.loading = false;
+      borrowPending = null;
+      throw e;
+    });
+    return borrowPending;
+  }
+
+  function refreshBorrow() {
+    var btn = $('borrowRefresh');
+    if (btn) btn.disabled = true;
+    loadBorrow().then(function () {
+      if (btn) btn.disabled = false;
+    }, function (e) {
+      if (btn) btn.disabled = false;
+      toast('借书单没刷新：' + ((e && e.message) || '请稍后重试'), 'err');
+    });
+  }
+
+  function borrowEmptyHTML(ro) {
+    return '<div class="borrow-empty">' +
+      '<span class="be-ico">' + icon('bookmark') + '</span>' +
+      '<h3>借书单还是空的</h3>' +
+      '<p>' + (ro
+        ? '在运行服务的电脑上打开馆藏结果，把要借的书加入借书单。'
+        : '在馆藏结果里点「加入借书单」，把这次要借的书、分馆和索书号收进来。') + '</p>' +
+      '</div>';
+  }
+
+  function borrowGroups(items) {
+    var map = {}, order = [];
+    (items || []).forEach(function (it) {
+      var key = it.branchKey || it.branch;
+      if (!map[key]) {
+        map[key] = {
+          key: key, name: it.branch || key, address: it.address || '',
+          tel: it.tel || '', lat: it.lat, lng: it.lng, items: []
+        };
+        order.push(key);
+      }
+      var g = map[key];
+      if (!g.address && it.address) g.address = it.address;
+      if (!g.tel && it.tel) g.tel = it.tel;
+      if (g.lat == null && it.lat != null) { g.lat = it.lat; g.lng = it.lng; }
+      g.items.push(it);
+    });
+    return order.map(function (k) { return map[k]; });
+  }
+
+  function borrowItemHTML(it, ro) {
+    var callnos = (it.callnos || []).map(function (c) {
+      return '<button type="button" class="borrow-callno" data-copy="' + esc(c) + '"' +
+        ' title="' + esc(c) + '（点击复制）">' + esc(c) + '</button>';
+    }).join('');
+    var rooms = (it.rooms || []).length
+      ? '<span class="borrow-rooms"><span class="br-lbl">库室</span>' +
+        esc(it.rooms.join(' | ')) + '</span>'
+      : '';
+    var meta = [it.author, it.isbn ? 'ISBN ' + it.isbn : ''].filter(Boolean).map(esc).join(' · ');
+    return '<div class="borrow-item" data-borrow-item="' + esc(it.id) + '">' +
+      '<div class="borrow-it-main">' +
+      '<div class="borrow-title" title="' + esc(it.title) + '">' + esc(it.title) + '</div>' +
+      (meta ? '<div class="borrow-meta">' + meta + '</div>' : '') +
+      '<div class="borrow-call-line">' +
+      (callnos || '<span class="borrow-missing">索书号不详</span>') + rooms +
+      '</div></div>' +
+      (ro ? '' : '<button type="button" class="borrow-del" data-borrow-del="' + esc(it.id) + '"' +
+        ' title="从借书单移除" aria-label="从借书单移除">' + icon('trash-2') + '</button>') +
+      '</div>';
+  }
+
+  function borrowGroupHTML(g, ro) {
+    var acts = [];
+    var dial = dialNo(g.tel);
+    if (dial) {
+      acts.push('<a class="b-ico" href="tel:' + dial + '" title="拨打 ' + esc(g.tel) + '"' +
+        ' aria-label="拨打 ' + esc(g.tel) + '">' + ICON_TEL + '</a>');
+    }
+    if (g.lat != null && g.lng != null) {
+      acts.push('<a class="b-ico" href="https://uri.amap.com/navigation?to=' + g.lng + ',' + g.lat + ',' +
+        encodeURIComponent(g.name) + '&mode=car&coordinate=gaode&callnative=1"' +
+        ' target="_blank" rel="noreferrer" title="导航到 ' + esc(g.name) + '"' +
+        ' aria-label="导航到 ' + esc(g.name) + '">' + ICON_NAV + '</a>');
+    } else if (g.address) {
+      acts.push('<a class="b-ico" href="https://uri.amap.com/search?keyword=' + encodeURIComponent(g.address) +
+        '" target="_blank" rel="noreferrer" title="在地图上搜 ' + esc(g.address) + '"' +
+        ' aria-label="在地图上搜 ' + esc(g.address) + '">' + ICON_NAV + '</a>');
+    }
+    return '<div class="borrow-group">' +
+      '<div class="borrow-bh">' +
+      '<div class="borrow-bh-main">' +
+      '<span class="borrow-bname" title="' + esc(g.name) + '">' + esc(g.name) + '</span>' +
+      '<span class="borrow-bcount">' + g.items.length + ' 本</span>' +
+      '</div>' +
+      (acts.length ? '<span class="borrow-bacts">' + acts.join('') + '</span>' : '') +
+      (g.address ? '<div class="borrow-addr" title="' + esc(g.address) + '">' + esc(g.address) + '</div>' : '') +
+      '</div>' +
+      '<div class="borrow-items">' + g.items.map(function (it) {
+        return borrowItemHTML(it, ro);
+      }).join('') + '</div></div>';
+  }
+
+  function paintBorrowShare() {
+    var tgl = $('borrowShareTgl');
+    var body = $('borrowShareBody');
+    var qr = $('borrowQr');
+    var url = $('borrowUrl');
+    var note = $('borrowShareNote');
+    var go = $('borrowLanGo');
+    if (!tgl || !body) return;
+    tgl.classList.toggle('open', !!S.borrowShareOpen);
+    tgl.setAttribute('aria-expanded', S.borrowShareOpen ? 'true' : 'false');
+    body.hidden = !S.borrowShareOpen;
+    if (!S.borrowShareOpen) return;
+    var sh = S.borrow.share;
+    if (!sh) {
+      if (qr) { qr.hidden = true; qr.innerHTML = ''; }
+      if (url) url.textContent = '—';
+      if (note) note.textContent = '还没拿到分享地址，点上面的刷新再试。';
+      if (go) go.hidden = true;
+      return;
+    }
+    if (!sh.on) {
+      if (qr) { qr.hidden = true; qr.innerHTML = ''; }
+      if (url) url.textContent = '—';
+      if (note) {
+        if (sh.local) {
+          note.textContent = '服务是用 --local 启动的，手机打不开这个地址。';
+        } else if (sh.error) {
+          note.textContent = '没找到本机内网地址，检查一下网络连接后再试。';
+        } else if (sh.enabled) {
+          note.textContent = '「从其他设备访问」已开启，但服务没能监听局域网：端口可能被别的程序占着。';
+        } else {
+          note.textContent = '手机要打开借书单，需要先在设置里打开「从其他设备访问」，' +
+            '并让手机和电脑连同一个 Wi-Fi。';
+        }
+      }
+      if (go) {
+        go.hidden = false;
+        go.textContent = sh.enabled ? '去设置看看' : '去设置开启';
+      }
+      return;
+    }
+    if (qr) {
+      qr.innerHTML = sh.qr || '';
+      qr.hidden = !sh.qr;
+    }
+    if (url) {
+      url.textContent = sh.url || '—';
+      url.onclick = sh.url
+        ? function () { copyText(sh.url, '地址已复制'); }
+        : null;
+    }
+    if (note) {
+      note.textContent = '手机和电脑连同一个 Wi-Fi，扫码打开后会自动停在借书单。' +
+        '清单改了，手机上刷新即可。';
+    }
+    if (go) go.hidden = true;
+  }
+
+  function renderBorrow() {
+    var body = $('borrowBody');
+    if (!body) return;
+    var ro = !!(S.cfg && S.cfg.readOnly) || S.borrow.readOnly;
+    var items = S.borrow.items;
+    var n = items.length;
+    var sub = $('borrowSub');
+    if (sub) {
+      sub.textContent = n
+        ? n + ' 本' + (borrowBranchCount(items) > 1
+          ? ' · ' + borrowBranchCount(items) + ' 家馆' : '')
+        : '还没有加入';
+    }
+    var shareBox = $('borrowShareBox');
+    if (shareBox) shareBox.hidden = ro || !n;
+    var clear = $('borrowClear');
+    if (clear) {
+      clear.hidden = ro || !n;
+      clear.textContent = S.borrowClearArm ? '再点一次清空' : '清空';
+      clear.classList.toggle('armed', !!S.borrowClearArm);
+    }
+    paintBorrowShare();
+    if (!n) {
+      body.innerHTML = borrowEmptyHTML(ro);
+      return;
+    }
+    var err = S.borrow.err
+      ? '<div class="note bar warn">' + esc(S.borrow.err) + '</div>' : '';
+    body.innerHTML = err + borrowGroups(items).map(function (g) {
+      return borrowGroupHTML(g, ro);
+    }).join('');
+  }
+
+  var borrowReturnFocus = null;
+
+  function openBorrow() {
+    var dlg = $('borrowDlg');
+    if (!dlg) return;
+    if (!(S.cfg && S.cfg.features && S.cfg.features.borrow)) {
+      toast('本地服务是旧版本：重启服务后再用借书单', 'err');
+      return;
+    }
+    borrowReturnFocus = document.activeElement;
+    S.borrowOpen = true;
+    S.borrowShareOpen = false;
+    S.borrowClearArm = 0;
+    dlg.classList.add('show');
+    dlg.setAttribute('aria-hidden', 'false');
+    renderBorrow();
+    // 启动时已经读过就不再拉一次；手机端要更新用对话框右上角的刷新
+    if (!S.borrow.loaded && !S.borrow.loading) loadBorrow().catch(function () {});
+    try { $('borrowClose').focus(); } catch (e) {}
+  }
+
+  function closeBorrow() {
+    var dlg = $('borrowDlg');
+    if (dlg) {
+      dlg.classList.remove('show');
+      dlg.setAttribute('aria-hidden', 'true');
+    }
+    S.borrowOpen = false;
+    S.borrowShareOpen = false;
+    S.borrowClearArm = 0;
+    restoreFocus(borrowReturnFocus);
+    borrowReturnFocus = null;
+    if (location.hash === '#borrow') {
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    }
+  }
+
+  function clearBorrow() {
+    if (!S.borrow.items.length) return;
+    if (!S.borrowClearArm) {
+      S.borrowClearArm = Date.now();
+      renderBorrow();
+      setTimeout(function () {
+        if (S.borrowClearArm) {
+          S.borrowClearArm = 0;
+          if (S.borrowOpen) renderBorrow();
+        }
+      }, 3500);
+      return;
+    }
+    S.borrowClearArm = 0;
+    var prev = S.borrow.items.slice();
+    S.borrow.items = [];
+    paintBorrowBadge();
+    syncBorrowButtons();
+    renderBorrow();
+    persistBorrow(prev, '借书单已清空');
+  }
+
+  function bindBorrow() {
+    var btn = $('borrowBtn');
+    if (btn) btn.addEventListener('click', openBorrow);
+    var dlg = $('borrowDlg');
+    if (!dlg) return;
+    $('borrowClose').addEventListener('click', closeBorrow);
+    $('borrowDone').addEventListener('click', closeBorrow);
+    dlg.addEventListener('click', function (e) {
+      if (e.target === this) closeBorrow();
+    });
+    dlg.addEventListener('keydown', function (e) { trapTab(this, e); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && dlg.classList.contains('show')) closeBorrow();
+    });
+    $('borrowRefresh').addEventListener('click', refreshBorrow);
+    $('borrowShareTgl').addEventListener('click', function () {
+      S.borrowShareOpen = !S.borrowShareOpen;
+      paintBorrowShare();
+    });
+    $('borrowLanGo').addEventListener('click', function () {
+      closeBorrow();
+      openSettings('lan');
+    });
+    $('borrowClear').addEventListener('click', clearBorrow);
+    $('borrowBody').addEventListener('click', function (e) {
+      var c = e.target.closest('[data-copy]');
+      if (c) {
+        copyText(c.getAttribute('data-copy'), '索书号已复制');
+        return;
+      }
+      var d = e.target.closest('[data-borrow-del]');
+      if (d) removeBorrowItem(d.getAttribute('data-borrow-del'));
+    });
   }
 
   function isIsbnTerm(v) {
@@ -516,16 +1017,27 @@
     renderBooks();
   }
 
-  // 出版社那一栏的文案：有就写「出版社 年份」，补不到才明说「出版信息不详」。
-  // 版本清单还在路上时先留白——这会儿还不知道到底缺不缺，闪一句假的缺失更坑。
-  // 认不出条目号也没有 ISBN 的书同样留白：压根没处查，说「不详」是把它没查过写成查过没有
-  function imprintText(book) {
-    if (book.publisher) return esc(book.publisher) + (book.year ? ' ' + esc(book.year) : '');
-    if (book.year) return esc(book.year);
+  // 出版社和年份分开给：结果页要把它们当两个字段排（作者 | 出版社 | 年份），
+  // 不在字符串里先拼成一格。版本清单还在路上时先留白——这会儿还不知道到底缺不缺，
+  // 闪一句假的缺失更坑；认不出条目号也没有 ISBN 的书同样留白，说「不详」等于把它没查过写成查过没有
+  function imprintParts(book) {
+    if (book.publisher || book.year) {
+      return {
+        pub: book.publisher ? esc(book.publisher) : '',
+        year: book.year ? esc(book.year) : ''
+      };
+    }
     var ref = verRefOf(book);
     var st = ref ? S.vers[ref] : null;
-    if (!st || st.busy) return '';
-    return '出版信息不详';
+    if (!st || st.busy) return { pub: '', year: '' };
+    return { pub: '出版信息不详', year: '' };
+  }
+
+  // 出版社那几栏的合写文案：有就写「出版社 年份」，补不到才明说「出版信息不详」。
+  // 其他书架/版本行继续用它，结果页标题下走 imprintParts 分字段排
+  function imprintText(book) {
+    var p = imprintParts(book);
+    return [p.pub, p.year].filter(Boolean).join(' ');
   }
 
   function removeManual(id) {
@@ -616,20 +1128,6 @@
     thumb.style.transition = '';
     thumb.style.transform = 'translateX(' + t.x + 'px)';
     thumb.style.width = t.w + 'px';
-  }
-
-  // 设置面板里「默认展开地图」两段开关的高亮，跟主题开关一个套路。
-  // 这开关和工具栏那颗地图钮、localStorage 的 shlib.map 是同一个值：
-  // 面板里点是「改默认并立刻生效」，工具栏点是「临时折叠」（也会记住）
-  function syncMapSeg(on, animate) {
-    var seg = $('mapSeg');
-    if (!seg) return;
-    var from = animate !== false ? segOnPos(seg) : null;
-    Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
-      b.classList.toggle('on', (b.getAttribute('data-map-val') === '1') === !!on);
-    });
-    if (from) slideSegThumb(seg, from);
-    else placeSegThumb(seg);
   }
 
   function esc(s) {
@@ -1322,6 +1820,70 @@
       '<div class="bk-main"><div class="t">' + esc(b.title) + '</div>' +
       '<div class="s">' + (sub || '—') + '</div>' +
       isbn + '</div>' + x + '</div>';
+  }
+
+  // ---- 电子书有无入口（仅本地版，默认关闭）
+  // 挂在结果页标题右侧那簇外链里：选中一本书才按 ISBN 查它有没有电子版，
+  // 命中才画 zlib/anna 两枚图标，没有就空着——不占位、不暗示「查过没有」。
+  function availOn() {
+    return !!(S.cfg && S.cfg.features && S.cfg.features.availability &&
+      S.cfg.availability && S.cfg.availability.enabled);
+  }
+
+  // 命中就两枚都画：能拼出地址的是链接，拼不出的（没配域名 / 旧缓存没 md5）是不可点的标记
+  // （只标「有电子书」，不给打不开的死链）。Z-Library 条目页的地址跟索引对不上，
+  // 所以链接落到它的 ISBN 搜索结果页；Anna's 能直接打开条目页，文案要分开写。
+  function availIconHTML(url, src, label, action) {
+    var img = '<img src="' + src + '" alt="" width="15" height="15">';
+    if (url) {
+      return '<a class="extlink avail-link" href="' + esc(url) + '" target="_blank" ' +
+        'rel="noopener noreferrer" title="' + esc(action) + '" ' +
+        'aria-label="' + esc(action) + '">' + img + '</a>';
+    }
+    return '<span class="extlink avail-link avail-mark" role="img" title="' +
+      esc(label) + ' 有电子书（暂无跳转地址）" aria-label="' +
+      esc(label) + ' 有电子书">' + img + '</span>';
+  }
+
+  function availIconsHTML(d) {
+    return availIconHTML(d.zlib_url, 'zlib-favicon.svg', 'Z-Library',
+      '在 Z-Library 搜索这本书') +
+      availIconHTML(d.anna_url, 'anna-favicon.png', "Anna's Archive",
+        "在 Anna's Archive 打开这本书");
+  }
+
+  function availKeyOf(b) {
+    return (b && b.isbn) ? compactIsbn(b.isbn) : '';
+  }
+
+  // 标题右侧留一个槽：开启且这本书有 ISBN 才出现。命中后填图标，没有就 :empty 收起，
+  // 不占位、不暗示「查过没有」。
+  function availSlotHTML(b) {
+    var key = availKeyOf(b);
+    if (!availOn() || !key) return '';
+    return '<span class="avail-slot" data-avail="' + esc(key) + '"></span>';
+  }
+
+  function paintAvail(key) {
+    var st = S.avail[key];
+    var data = st && st.data;
+    Array.prototype.forEach.call(
+      document.querySelectorAll('[data-avail="' + key + '"]'),
+      function (slot) { slot.innerHTML = (data && data.found) ? availIconsHTML(data) : ''; });
+  }
+
+  // 选中哪本查哪本：结果页一次只显示一本书，不需要排队或滚动触发。
+  // 查过直接用缓存；正在查就等它回来再补画。
+  function refreshAvailability(b) {
+    var key = availKeyOf(b);
+    if (!availOn() || !key) return;
+    var st = S.avail[key];
+    if (st && (st.busy || st.data)) { paintAvail(key); return; }
+    S.avail[key] = { busy: true };
+    apiGet('/api/availability?isbn=' + encodeURIComponent(key), 20000)
+      .then(function (data) { S.avail[key] = { data: data }; })
+      .catch(function () { S.avail[key] = { data: { found: false } }; })
+      .then(function () { paintAvail(key); });
   }
 
   function renderBooks() {
@@ -2202,7 +2764,8 @@
     }
     $('result').innerHTML = '<div class="result-inner">' + headHTML(book) +
       '<div class="loading-row"><span class="spin"></span> 正在查上图（逐册核对，约 2-6 秒）…</div></div>';
-    ensureVersions(book);
+    paintVersions(book);
+    refreshAvailability(book);
   }
 
   // ---------------------------------------------------------------- 其他版本（豆瓣区块）
@@ -2239,12 +2802,12 @@
     // 没有其他版本就整块不出现：一行「没有查到其他版本」不回答问题，只是占位
     if (!list.length) return '';
     // 折叠是默认态：几行版本把真正的答案（哪家馆能借）推出首屏，而绝大多数查询
-    // 只要当前这一版。收起时只留一枚胶囊，全量入口跟着列表走，点开才看得见
+    // 只要当前这一版。收起时只留一枚胶囊，点开才去豆瓣取——不再为了显示一个数量
+    // 就替每本打开的书写一遍详情页。全量入口跟着列表走，点开才看得见
     var open = !!S.versOpen[book.id];
     var head = '<button type="button" class="db-vers-head' + (open ? ' open' : '') + '"' +
       ' data-db-act="ver-toggle" aria-expanded="' + (open ? 'true' : 'false') + '">' +
       '<span class="db-vers-lbl">本书其他版本</span>' +
-      '<span class="db-vers-n">' + list.length + ' 个</span>' +
       icon('chevron-down') + '</button>';
     if (!open) return head;
     var rows = list.map(function (e) {
@@ -2272,27 +2835,39 @@
     var slot = $('dbVersSlot');
     if (!slot) return;
     var ref = verRefOf(book);
-    var st = ref ? S.vers[ref] : null;
-    // 请求已经发出、还没回来：先占一颗和收起态那颗胶囊同高的占位，
-    // 不然版本到货时整块结果卡往下长一截
-    if (st && st.busy && !st.data) {
+    // 旧服务端没有 /api/versions：整块不出现，别给一颗点了没反应的胶囊
+    if (!ref || (S.cfg && S.cfg.features && !S.cfg.features.versions)) {
+      slot.innerHTML = '';
+      return;
+    }
+    var st = S.vers[ref];
+    // 正在取：先占一颗和收起态同高的骨架条，版本到货时不跳
+    if (st && st.busy) {
       slot.innerHTML = '<div class="db-vers-head skel-head"><i class="skel"></i></div>';
       return;
     }
-    // 没读到就什么都不画：这一行的规矩是「读到至少一条才出现」。
-    // 没这个区块、被豆瓣挡下、那几条都没标 ISBN——都不占位置，原因只在控制台里
-    slot.innerHTML = (st && st.data) ? versionsHTML(book, st.data) : '';
+    // 取到过：按缓存画（没有其他版本时 versionsHTML 返回空，整块消失）
+    if (st && st.data) {
+      slot.innerHTML = versionsHTML(book, st.data);
+      return;
+    }
+    // 还没点过 / 上次失败：都只留一颗空胶囊。点它才发请求，失败后不会再自动重试
+    slot.innerHTML = '<button type="button" class="db-vers-head" data-db-act="ver-toggle"' +
+      ' aria-expanded="false">' +
+      '<span class="db-vers-lbl">本书其他版本</span>' + icon('chevron-down') + '</button>';
   }
 
-  function ensureVersions(book) {
+  // 用户点了胶囊才走到这里：有缓存直接展开，没缓存才去豆瓣。
+  // 失败只提示一次，胶囊留在原地；再点一次就是明确的重试。
+  function loadVersions(book) {
     if (!book) return;
-    paintVersions(book);
     var ref = verRefOf(book);
     if (!ref) return;
-    var st = S.vers[ref];
-    // 失败过就不再自动重试：整行不出现就是最终结果，别让每次重绘都去打豆瓣
-    if (st && (st.busy || st.err || (st.data && Date.now() - st.at < VER_TTL))) return;
-    // fetchVersions 是同步把 busy 挂上的，所以它一返回就再画一次——占位条要在这几秒里看得见
+    S.versOpen[book.id] = true;
+    if (S.vers[ref] && S.vers[ref].busy) {
+      paintVersions(book);
+      return;
+    }
     var p = fetchVersions(book);
     paintVersions(book);
     p.then(function (d) {
@@ -2300,7 +2875,9 @@
       paintVersions(findBook(book.id) || book);
     }).catch(function (e) {
       console.warn('本书其他版本没读到：' + ((e && e.message) || e));
+      S.versOpen[book.id] = false;
       paintVersions(findBook(book.id) || book);
+      toast((e && e.message) || '没读到其他版本，过一会儿再试', 'err');
     });
   }
 
@@ -2367,13 +2944,18 @@
   }
 
   function headHTML(book, meta) {
-    // 书的身份信息分两行：第二排作者 | 出版社 年份，第三排单独放 ISBN。
+    // 书的身份信息分两行：第二排作者 | 出版社 | 年份，第三排单独放 ISBN。
     // 册数、馆数不再往这儿写——筛选条上已经有「册/馆」计数、封面角标上是可借家数，
-    // 同一批数字第三次出现只会把「这本书是什么」挤到后面去
-    var sub = [];
-    if (book.author) sub.push(esc(book.author));
-    var imp = imprintText(book);
-    if (imp) sub.push(imp);
+    // 同一批数字第三次出现只会把「这本书是什么」挤到后面去。
+    // 三个字段各占一格：一行放不下时先截作者（且作者本身有最大宽度），
+    // 出版社随后让位，年份始终留在行末（见 style.css 的 .sub-a / .sub-p / .sub-y）
+    var author = book.author ? esc(book.author) : '';
+    var ip = imprintParts(book);
+    var subParts = [];
+    if (author) subParts.push('<span class="sub-a">' + author + '</span>');
+    if (ip.pub) subParts.push('<span class="sub-p">' + ip.pub + '</span>');
+    if (ip.year) subParts.push('<span class="sub-y">' + ip.year + '</span>');
+    var sub = subParts.join('<span class="sub-sep" aria-hidden="true">|</span>');
     // ISBN 是抄下来跟人核对用的号码，挤在作者后面容易被当成一句话读过去
 
     // 外链：跳到上图这一本书的原始页面。
@@ -2402,8 +2984,11 @@
     // 查询中也不转圈（同一句话不用讲两遍）——见 coverBox
     return '<div class="res-head">' +
       coverBox(book.cover, 'cover', book.title, rid, '', false) +
-      '<div class="h-main"><h1><span class="ht">' + esc(book.title) + '</span>' + extlink + dblink + '</h1>' +
-      (sub.length ? '<div class="sub">' + joinSep(sub) + '</div>' : '') +
+      '<div class="h-main"><h1><span class="ht" title="' + esc(book.title) + '">' + esc(book.title) + '</span>' +
+      availSlotHTML(book) + extlink + dblink + '</h1>' +
+      (sub ? '<div class="sub" title="' +
+        esc([book.author, book.publisher, book.year].filter(Boolean).join(' | ')) + '">' +
+        sub + '</div>' : '') +
       '<div class="db-vers" id="dbVersSlot"></div>' +
       '</div></div>';
   }
@@ -2414,8 +2999,8 @@
   /**
    * 空态：结果区一张卡都出不来时占位。
    * 结构 = 大图标 + 标题 + 一句解释 + 可选的操作按钮，靠 max-width 收窄成一段可读的正文。
-   * actions 传 [{act:'set-filter', v:'all', label:'看全部馆藏'} | {act:'toggle-open'} |
-   * {act:'requery'}]，事件在 bindEmptyEvents() 里统一绑——这里只出 data-act 属性，
+   * actions 传 [{act:'set-filter', v:'now'|'avail'|'all', label:'看全部馆藏'} |
+   * {act:'requery'} | {act:'clear-q'} | {act:'call'}]，事件在 bindEmptyEvents() 里统一绑——这里只出 data-act 属性，
    * 不写 onclick（项目里没有内联事件，CSP 友好、也好测）。
    */
   function emptyState(o) {
@@ -2437,11 +3022,6 @@
         var act = b.getAttribute('data-act');
         if (act === 'set-filter') {
           S.filter = b.getAttribute('data-v') || 'avail';
-          S.showAll = false;
-          renderResult();
-        } else if (act === 'toggle-open') {
-          // 关掉「营业中」：此刻全城关门时，这是回到有结果最快的一步
-          S.onlyOpen = false;
           S.showAll = false;
           renderResult();
         } else if (act === 'clear-q') {
@@ -2497,6 +3077,7 @@
           })) +
         '</div>';
       bindEmptyEvents();
+      refreshAvailability(book);
       return;
     }
 
@@ -2510,7 +3091,8 @@
         }) +
         '</div>';
       bindEmptyEvents();
-      ensureVersions(book);
+      paintVersions(book);
+      refreshAvailability(book);
       return;
     }
 
@@ -2519,7 +3101,7 @@
 
     // 结果内筛选：在「这本书的馆藏」里按馆名收窄。别名（display）不单独匹配，
     // 它跟 name 常常只差一个括号分馆名，一起匹配只会让人以为能搜出别的馆。
-    // 后面的可借/营业中判断和空态计数都从收窄后的这批算——否则筛出 0 家时，
+    // 后面的可借/现在可借判断和空态计数都从收窄后的这批算——否则筛出 0 家时，
     // 空态会拿全城数说「各处都已借出」，跟用户眼前的搜索范围对不上
     var q = S.q.trim();
     var qlc = q.toLowerCase();
@@ -2527,10 +3109,10 @@
       return String(p.name || '').toLowerCase().indexOf(qlc) >= 0;
     });
 
-    // 可借 = 有在架册。今日闭馆的馆也算可借（书就在架上，只是今天去不了），
-    // 卡片上会标「今日闭馆」；是否只要此刻营业的，交给「营业中」勾选框。
-    // 没有开放时间数据的（openToday === null）不再算营业中——「此刻开着」是这档的承诺，
-    // 不知道就等于没承诺。这类馆卡片上标「开馆时间未知」，勾上「营业中」时被隐藏。
+    // 「可借」= 有在架册。今日闭馆的馆也算可借（书就在架上，只是今天去不了），
+    // 卡片上会标「今日闭馆」；要不要连营业状态一起筛，交给上一档「现在可借」。
+    // 没有开放时间数据的（openToday === null）不算「现在可借」——「此刻开着」是这档的承诺，
+    // 不知道就等于没承诺。这类馆卡片上标「开馆时间未知」，只在「现在可借」下被隐藏。
     var availAll = placesQ.filter(function (p) { return p.available > 0; });
     var anyAvail = availAll.length > 0;
     var availNow = availAll.filter(function (p) { return p.openNow === true; });
@@ -2546,18 +3128,14 @@
       ? todaySpecial.name + (todaySpecial.kind === 'holiday' ? '假期' : '调休工作日')
       : '';
 
-    // 三档视图：只看可借 / 只看可借且此刻营业 / 全部馆藏。
-    // 「营业中」勾着而此刻全城关门时，不退回「全部可借」——那样列表和勾选框自相矛盾，
+    // 三档视图：现在可借 / 可借 / 全部馆藏。
+    // 「现在可借」档此刻全城关门时，不退回「可借」——那样列表和选中的档位自相矛盾，
     // 用户以为自己在看「现在能去的」，实际看到的包含关门的馆。给空态，让他自己决定要不要放开。
-    // 只有勾着「营业中」时才真的按 availNow 裁；没勾时 availNow 可能为空（全城关门），
-    // 那时候不能顺手退回 availAll，否则勾选框就等于没生效。
-    // 另外判断条件用 S.filter 本身，不能写成「且 anyAvail」：一册都没在架时那样会让
-    // filterOn 变 false，于是「只看可借」档直接列出全部借出的馆，和按钮的说法相反。
-    var filterOn = S.filter === 'avail';
-    var shown = placesQ;
-    if (filterOn) {
-      shown = S.onlyOpen ? availNow : availAll;
-    }
+    // 判断条件用档位本身，不能写成「且 anyAvail」：一册都没在架时那样会让分支失效，
+    // 于是「可借」档直接列出全部借出的馆，和档位的说法相反。
+    var shown = S.filter === 'now' ? availNow
+      : S.filter === 'avail' ? availAll
+        : placesQ;
     var visible = S.showAll ? shown : shown.slice(0, SHOW_LIMIT);
     // 手机全屏地图跟列表用同一批点：地图上多出来的馆点了对不上卡片
     S.mapShown = visible;
@@ -2568,16 +3146,11 @@
     var toolbar = '<div class="toolbar">' +
       '<div class="seg">' +
       '<span class="seg-thumb" aria-hidden="true"></span>' +
+      '<button data-filter="now" class="' + (S.filter === 'now' ? 'on' : '') + '"' +
+      ' title="只列此刻确定在营业时段的馆；开馆时间未知、开馆安排待确认的会被隐藏">现在可借</button>' +
       '<button data-filter="avail" class="' + (S.filter === 'avail' ? 'on' : '') + '">可借</button>' +
       '<button data-filter="all" class="' + (S.filter === 'all' ? 'on' : '') + '">全部</button>' +
       '</div>' +
-      '<button type="button" class="tgl" id="onlyOpen"' +
-      ' aria-pressed="' + (S.onlyOpen ? 'true' : 'false') + '"' +
-      (S.filter === 'all' ? ' disabled' : '') +
-      ' title="只列此刻开门营业的馆（仅在「可借」下生效；开馆时间未知、开馆安排待确认的会被隐藏）">' +
-      '<span>营业中</span>' +
-      '<span class="tgl-track"><span class="tgl-knob"></span></span>' +
-      '</button>' +
       '<span class="spacer"></span>' +
       '<button class="sm icon-btn" id="requery" title="重新查询：跳过缓存，重新从上图获取实时馆藏" ' +
       'aria-label="重新查询">' + ICON_REFRESH + '</button>' +
@@ -2605,16 +3178,16 @@
         '</div>'
       : '';
 
-    var cards = visible.map(function (p, i) { return cardHTML(p, i); }).join('');
+    var cards = visible.map(function (p, i) { return cardHTML(p, i, book); }).join('');
 
     // ---- 空态：三种「没有一张卡」的原因，各给各的话术和出路。
     // 优先级：结构异常 > 没有在架册 > 此刻无营业中
-    // 「没有在架册」必须排在「营业中」前面：一本全城借空的书，如果上本书勾过「营业中」，
+    // 「没有在架册」必须排在「现在可借」前面：一本全城借空的书，如果上本书停在「现在可借」档，
     // 就会落进营业中分支，说出「0 家馆有在架册，但都不在营业时间」和「看这 0 家」这种自相矛盾的话
     // （结构异常时后两种判断本身就不可信，不能拿它当结论说给用户听）
-    // 「没有在架册」只在「只看可借」档下算是空态；「全部馆藏」档把全部借出的馆照常列出来，
+    // 「没有在架册」只在可借类档位下算是空态；「全部馆藏」档把全部借出的馆照常列出来，
     // 那是有用的信息（能看到哪家有、几册），不该被一张空态盖掉——真的一家馆都没有时，
-    // 「营业中」也不会勾着（勾选框在全部馆藏档下是 disabled），落到最后一个分支。
+    // 也不可能停在「现在可借」档，落到最后一个分支。
     var emptyHTML = '';
     // 假期空态是否已经把「今天是某假期、建议先打电话」说过了；说过就不再挂 holidayBar
     var holidaySaid = false;
@@ -2646,7 +3219,7 @@
           desc: '没有馆名含「' + esc(q) + '」的馆。换个词试试，或清除筛选看全部。',
           actions: [{ act: 'clear-q', label: '清除筛选', primary: true }]
         });
-      } else if (S.onlyOpen && anyAvail) {
+      } else if (S.filter === 'now' && anyAvail) {
         // 有在架册，但此刻没有一家能确定在营业
         var closedCnt = availAll.length - unknownHours - holidayUnknown;
         if (!closedCnt) {
@@ -2654,16 +3227,16 @@
           var noTimeDesc;
           if (holidayUnknown && !unknownHours) {
             noTimeDesc = '这 ' + availAll.length + ' 家有在架册，但按常规时间今天都闭馆——今天是' +
-              specialName + '，开馆安排可能调整，所以「营业中」筛不出结果。去之前建议先打电话确认。';
+              specialName + '，开馆安排可能调整，所以「现在可借」筛不出结果。去之前建议先打电话确认。';
             // 空态自己说了假期 + 打电话，下面那条假期提示条就别再重复一遍（同一屏两遍）
             holidaySaid = true;
           } else if (!holidayUnknown && unknownHours) {
             noTimeDesc = '这 ' + availAll.length + ' 家有在架册，但上图没有它们的开馆时间，' +
-              '所以「营业中」筛不出结果。去之前建议先打电话确认。';
+              '所以「现在可借」筛不出结果。去之前建议先打电话确认。';
           } else {
             noTimeDesc = '这 ' + availAll.length + ' 家有在架册：' + holidayUnknown +
               ' 家按常规时间今天闭馆（今天是' + specialName + '，安排可能调整）、' +
-              unknownHours + ' 家没有开馆时间，所以「营业中」筛不出结果。去之前建议先打电话确认。';
+              unknownHours + ' 家没有开馆时间，所以「现在可借」筛不出结果。去之前建议先打电话确认。';
             holidaySaid = holidayUnknown > 0;
           }
           emptyHTML = emptyState({
@@ -2671,7 +3244,7 @@
             title: holidayUnknown && !unknownHours ? '开馆安排待确认' : '无法判断是否营业',
             desc: noTimeDesc,
             actions: [
-              { act: 'toggle-open', label: '看这 ' + availAll.length + ' 家（不筛营业状态）', primary: true },
+              { act: 'set-filter', v: 'avail', label: '看这 ' + availAll.length + ' 家（不筛营业状态）', primary: true },
               { act: 'set-filter', v: 'all', label: '看全部' }
             ]
           });
@@ -2696,7 +3269,7 @@
             (also.length ? '。另有 ' + also.join('、') + '，同样没列出来' : '') +
             '。',
           actions: [
-            { act: 'toggle-open', label: '看这 ' + availAll.length + ' 家（含已闭馆）', primary: true },
+            { act: 'set-filter', v: 'avail', label: '看这 ' + availAll.length + ' 家（含已闭馆）', primary: true },
             { act: 'set-filter', v: 'all', label: '看全部' }
           ]
         });
@@ -2752,7 +3325,7 @@
           actions: borrowActs
         });
       } else {
-        // 兜底：有在架册、「营业中」也没勾，却一张卡都没有（馆藏数据是空的/只读不借一类）
+        // 兜底：有在架册、也没停在「现在可借」档，却一张卡都没有（馆藏数据是空的/只读不借一类）
         emptyHTML = emptyState({
           icon: 'book-x',
           title: '没有查到馆藏记录',
@@ -2773,7 +3346,7 @@
     // 空态已经把事情说全了（标题 + 解释 + 按钮），提示条只在「有卡片但需要补充说明」时出现，
     // 否则会出现「一条提示 + 一个空态」两层说法，互相抢注意力
     if (!emptyHTML) {
-      if (filterOn && S.onlyOpen) {
+      if (S.filter === 'now') {
         var hiddenNow = availAll.length - shown.length;
         // 时间未知和假期待确认的馆必然在 hiddenNow 里（openNow 不会是 true），
         // 剩下的才是「按常规时间确定没在营业」
@@ -2823,7 +3396,7 @@
 
     // 假期/调休日：各馆常会临时改开馆时间，而上图没有单独公布分馆假日时刻表。
     // 这里只做提醒，不把任何馆直接判成「今天不开门」——那比不确定更误导人。
-    // 但「营业中」筛到一张卡都不剩时，空态本身已经把假期 + 打电话讲完了，
+    // 但「现在可借」筛到一张卡都不剩时，空态本身已经把假期 + 打电话讲完了，
     // 再挂一条同样的提示条就是同一屏说两遍（跟上面「空态说话时不叠 note」同一条规矩）
     var holidayBar = (todaySpecial && !holidaySaid)
       ? '<div class="note bar holiday">' + icon('calendar') +
@@ -2856,8 +3429,9 @@
       '</div>' +
       '</div></div>';
 
-    bindResultEvents(book, shown, filterOn);
-    ensureVersions(book);
+    bindResultEvents(book, shown);
+    paintVersions(book);
+    refreshAvailability(book);
     // 工具栏是整块重绘的，滑块没有可复用的 DOM：先按当前选中项直接摆好，
     // 切筛选时由 bindResultEvents 里那次点击再补一段从旧位置滑过来的动画
     var segEl = document.querySelector('.toolbar .seg');
@@ -3204,7 +3778,6 @@
     S.mapOn = !S.mapOn;
     lsSet('shlib.map', S.mapOn ? '1' : '0');
     S.mapView = null;   // 重新展开时按当前结果重新框一次
-    syncMapSeg(S.mapOn);
     // 没选书：结果区还是初始空态，重绘会把它换成转圈骨架。只改值和记忆，不动界面
     if (!S.activeId) return;
     var wrap = $('mapWrap');
@@ -3649,7 +4222,7 @@
 
   // 上图压根没给开放时间（479 家里有 37 家），或原文写法没认出来 → today 为空。
   // 以前这里什么都不渲染，看不出是「没数据」还是「程序漏了」，
-  // 而且这类馆会被「营业中」当成在营业放过去。现在明说「未知」，并且不再算营业中。
+  // 而且这类馆会被「现在可借」当成在营业放过去。现在明说「未知」，并且不再算营业中。
   function noHoursTagHTML() {
     return '<span class="tag notime" title="上图没有这家馆的开馆时间，无法判断此刻是否营业，去之前建议先打电话确认">' +
       '开馆时间未知</span>';
@@ -3658,7 +4231,7 @@
   // 借阅类型分两簇：外借类型一簇、馆内类型一簇。
   // 同一簇内部用「·」，簇之间仍由 .badges 的「|」分隔；馆内只保留一个眼睛。
   // 保存本/参考外借不能外借，但读者可能想在馆内看，别丢掉。
-  // availOnly=true（「只看可借」视图）：馆内这一簇跟可借视图矛盾，整簇不渲染，
+  // availOnly=true（「可借 / 现在可借」视图）：馆内这一簇跟可借视图矛盾，整簇不渲染，
   // 结果区只保留「X/Y 可借」一种信息，避免噪音。
   function kindTagsHTML(p, availOnly) {
     var order = ['general', 'children', 'reference', 'preserved', 'other'];
@@ -3695,14 +4268,14 @@
     return out.join('');
   }
 
-  function cardHTML(p, idx) {
+  function cardHTML(p, idx, book) {
     // 三行封顶：① 序号 + 馆名 + 拨号/导航 + 距离 ② 可借/开放/借阅类型 + 右端骑行用时 ③ 索书号 + 库室
     // 区字段（p.zone）现在只在匹配分馆时用，不再上屏
     var badges = [];
     badges.push(availBadgeHTML(p));
     if (p.today) badges.push(openTagHTML(p));
     else badges.push(noHoursTagHTML());
-    badges.push(kindTagsHTML(p, S.filter === 'avail'));
+    badges.push(kindTagsHTML(p, S.filter !== 'all'));
 
     // 索书号可能很长（版次 + 复本号），屏幕上会截断成省略号，
     // 所以 title 里带全文：鼠标停上去能看全，点了复制的也永远是全文
@@ -3748,19 +4321,40 @@
       : '';
 
     // 索书号和库室是「站到架子跟前才用」的信息，几十张卡逐行铺开只会把「哪家能借」推远。
-    // 默认收成一枚「索书号 · 库室 ▾」：点一下钉住展开，桌面鼠标停在卡上也临时给全
-    var foot = '';
-    if (callnos || rooms) {
-      var fKey = p.name || p.display;
-      var fOpen = !!S.footOpen[fKey];
-      foot = '<div class="foot' + (fOpen ? ' open' : '') + '">' +
-        '<button type="button" class="foot-tgl" data-foot-toggle="' + esc(fKey) + '"' +
+    // 默认收成一枚「索书号 · 库室 ▾」：点一下钉住展开，桌面鼠标停在卡上也临时给全。
+    // 第三行常驻：右边那颗「加入借书单」跟左边共用一行，没有索书号/库室的馆也能加入
+    var fKey = p.name || p.display;
+    var fOpen = !!S.footOpen[fKey];
+    var tgl = (callnos || rooms)
+      ? '<button type="button" class="foot-tgl" data-foot-toggle="' + esc(fKey) + '"' +
         ' aria-expanded="' + (fOpen ? 'true' : 'false') + '">索书号 · 库室' +
-        icon('chevron-down') + '</button>' +
-        '<div class="foot-body">' +
+        icon('chevron-down') + '</button>'
+      : '';
+    var body = (callnos || rooms)
+      ? '<div class="foot-body">' +
         (callnos ? '<span class="callnos">' + callnos + '</span>' : '') +
-        rooms + '</div></div>';
-    }
+        rooms + '</div>'
+      : '';
+
+    // 只有「这家馆现在有在架册」才给加入：借书单记的是这次去能拿到的书+馆+索书号，
+    // 加一家借不到的没有意义。只读来源（手机）和旧服务端不出这颗按钮
+    var canBorrow = !!(book && S.cfg && !S.cfg.readOnly &&
+      S.cfg.features && S.cfg.features.borrow && p.available > 0);
+    var bOn = canBorrow && !!borrowFind(book, p);
+    var borrowBtn = canBorrow
+      ? '<button type="button" class="foot-tgl borrow-add' + (bOn ? ' on' : '') + '"' +
+        ' data-borrow-key="' + esc(borrowEntryKey(book, p)) + '"' +
+        ' data-borrow-idx="' + idx + '"' +
+        ' aria-pressed="' + (bOn ? 'true' : 'false') + '"' +
+        ' title="' + (bOn ? '已在借书单，点击移除' : '加入借书单') + '"' +
+        ' aria-label="' + (bOn ? '已在借书单，点击移除' : '加入借书单') + '">' +
+        icon('bookmark-plus', 'ic-add') + icon('check', 'ic-on') +
+        '<span class="borrow-add-lbl">' + (bOn ? '已在借书单' : '加入借书单') + '</span></button>'
+      : '';
+    var foot = (tgl || borrowBtn)
+      ? '<div class="foot' + (fOpen ? ' open' : '') + '">' +
+        '<div class="foot-row">' + tgl + borrowBtn + '</div>' + body + '</div>'
+      : '';
 
     // 序号跟地图上的标记一一对应。没坐标的馆地图上没标记，给它编号只会让人对不上，干脆不编。
     // 窄屏没有背景地图，但工具栏上有「全屏地图」按钮，标记编号照样要看得到，
@@ -3788,7 +4382,7 @@
       '</div>';
   }
 
-  function bindResultEvents(book, shown, filterOn) {
+  function bindResultEvents(book, shown) {
     Array.prototype.forEach.call(document.querySelectorAll('[data-filter]'), function (b) {
       b.addEventListener('click', function () {
         var from = segOnPos(document.querySelector('.toolbar .seg'));
@@ -3863,19 +4457,6 @@
     var addrGo = $('addrGo');
     if (addrGo) addrGo.addEventListener('click', function () { openAddr(); });
 
-    var tgl = $('onlyOpen');
-    if (tgl) tgl.addEventListener('click', function () {
-      var on = tgl.getAttribute('aria-pressed') !== 'true';
-      tgl.setAttribute('aria-pressed', on ? 'true' : 'false');
-      var list = document.querySelector('.res-list');
-      var scrollPos = list ? list.scrollTop : 0;
-      S.onlyOpen = on;
-      // 不重置 showAll：同筛选切换的理由，用户点过「显示全部」就不该被悄悄退回前 30
-      renderResult();
-      var newList = document.querySelector('.res-list');
-      if (newList) newList.scrollTop = scrollPos;
-    });
-
     // 地图折叠：只重绘本区，不丢 book/shown 的上下文。过渡时序见 toggleMap
     var mt = $('mapToggle');
     if (mt) mt.addEventListener('click', toggleMap);
@@ -3903,9 +4484,19 @@
         var key = b.getAttribute('data-foot-toggle');
         var open = !S.footOpen[key];
         S.footOpen[key] = open;
-        var foot = b.parentElement;
+        // 按钮现在在 .foot-row 里，展开态要加到外层 .foot 上
+        var foot = b.closest('.foot');
         if (foot) foot.classList.toggle('open', open);
         b.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    });
+
+    // 加入/移出借书单：按钮上带着第几张卡，索引对回这次渲染的 visible
+    Array.prototype.forEach.call(document.querySelectorAll('[data-borrow-idx]'), function (b) {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var p = shown[parseInt(b.getAttribute('data-borrow-idx'), 10)];
+        if (p) toggleBorrow(book, p);
       });
     });
 
@@ -4127,6 +4718,10 @@
     });
     var lan = $('lanToggle');
     if (lan) lan.disabled = ro;
+    ['availToggle', 'availDomains', 'availProxy', 'availZlibBase', 'availAnnaBase'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.disabled = ro;
+    });
     // 检查更新是写操作（POST，服务端只收本机请求），只读时不给点
     var cu = $('checkUpdate');
     if (cu) cu.disabled = ro;
@@ -4139,7 +4734,10 @@
     doulist_url: 'setDoulist',
     wish_url: 'setWish',
     geocode: 'setKey',
-    map: 'setMapKey'
+    map: 'setMapKey',
+    availability: 'availDomains',
+    'availability.zlibBase': 'availZlibBase',
+    'availability.annaBase': 'availAnnaBase'
   };
   var fieldErr = null;   // { input: 输入框, msg: 那行原因的节点 }
 
@@ -4187,10 +4785,29 @@
     var mc = cfg.map || {};
     $('setMapKey').placeholder = mc.hasKey
       ? '已保存（' + mc.keyTail + '），留空不改' : '在这里粘贴 Key';
+    // 电子书资源：开关 + 查询镜像 + 代理 + 两个打开地址。镜像/代理/地址局域网来源
+    // 拿不到（服务端只给回环），那边本来就是只读，框里空着也无妨。
+    // 关着的时候整组查询项收起：没开启时这些值都不参与任何请求，摆在面板里只会添噪音
+    var av = cfg.availability || {};
+    var at = $('availToggle');
+    if (at) at.setAttribute('aria-pressed', av.enabled ? 'true' : 'false');
+    var as = $('availStat');
+    if (as) as.textContent = av.enabled ? '已开启：书名旁会显示电子书入口'
+      : '未开启，不会向第三方发送任何信息';
+    var ao = $('availOpts');
+    if (ao) ao.hidden = !av.enabled;
+    var ad = $('availDomains');
+    if (ad) ad.value = (av.domains || []).join('\n');
+    var ap = $('availProxy');
+    if (ap) ap.value = av.proxy || '';
+    var az = $('availZlibBase');
+    if (az) az.value = av.zlibBase || '';
+    var aa = $('availAnnaBase');
+    if (aa) aa.value = av.annaBase || '';
     // 版本号：放在「关于」分组里
     var vEl = $('setVer');
     if (vEl) {
-      vEl.textContent = '上图馆藏查询 v' + (S.cfgVersion || '—');
+      vEl.textContent = '借得到 v' + (S.cfgVersion || '—');
       if (S.cfgBuild) {
         var sm = document.createElement('small');
         sm.textContent = '构建 ' + S.cfgBuild;
@@ -4210,17 +4827,20 @@
     loadUpdatePeek();
     // 同步外观开关的高亮（不写 localStorage）
     applyTheme(document.documentElement.getAttribute('data-theme') || 'light', false);
-    // 地图默认展不展开：没存过就按启动时的判定显示（宽屏开、窄屏关），
-    // 别把窄屏下的临时收起当成用户已经做过选择
-    var mv0 = lsGet('shlib.map');
-    syncMapSeg(mv0 === null ? window.innerWidth > NARROW_W : mv0 !== '0', false);
     // 内容区上次停在哪就还停在哪，重开面板会接着读半截；回到最上面
     var sm = $('settings').querySelector('.set-main');
     if (sm) sm.scrollTop = 0;
     $('settings').classList.add('show');
     $('settings').setAttribute('aria-hidden', 'false');
     loadLanInfo();
-    if ((focus === 'doulist' || focus === 'wish') && !cfg.readOnly) {
+    // 从借书单的「去设置开启」进来：滚到「从其他设备访问」那一格，焦点落到开关上
+    if (focus === 'lan') {
+      var lf = $('lanField');
+      if (lf) { try { lf.scrollIntoView({ block: 'start' }); } catch (e) {} }
+      var lt = $('lanToggle');
+      if (lt && !lt.disabled) { try { lt.focus(); } catch (e) {} }
+      else { try { $('setClose').focus(); } catch (e) {} }
+    } else if ((focus === 'doulist' || focus === 'wish') && !cfg.readOnly) {
       var inp = focus === 'wish' ? $('setWish') : $('setDoulist');
       try { inp.focus(); inp.select(); } catch (e) {}
     } else {
@@ -4433,12 +5053,39 @@
     var hadLan = !!(S.cfg && S.cfg.lan && S.cfg.lan.enabled);
     body.lan = wantLan;
 
+    // 电子书资源：开关 + 域名（按行/逗号拆）+ 代理 + 两个跳转官网。
+    // 域名/代理/跳转域名预填了当前值，原样回传不会误改
+    var wantAvail = $('availToggle').getAttribute('aria-pressed') === 'true';
+    var priorAvail = (S.cfg && S.cfg.availability) || {};
+    var availDomains = $('availDomains').value.split(/[\n,]+/)
+      .map(function (s) { return s.trim(); }).filter(Boolean);
+    var availProxy = $('availProxy').value.trim();
+    var zlibBase = $('availZlibBase').value.trim();
+    var annaBase = $('availAnnaBase').value.trim();
+    body.availability = {
+      enabled: wantAvail,
+      domains: availDomains,
+      proxy: availProxy,
+      zlibBase: zlibBase,
+      annaBase: annaBase
+    };
+    // 这一组任何一项变了，已在页面上的「有没有 + 链接」就得作废重画：
+    // 链接是服务端按当前跳转域名现拼的，改完要重新拉一次
+    var availDirty = wantAvail !== !!priorAvail.enabled ||
+      availDomains.join('\n') !== (priorAvail.domains || []).join('\n') ||
+      availProxy !== (priorAvail.proxy || '') ||
+      zlibBase.replace(/\/+$/, '') !== (priorAvail.zlibBase || '') ||
+      annaBase.replace(/\/+$/, '') !== (priorAvail.annaBase || '');
+
     apiPost('/api/config', body).then(function () {
       return Promise.all([apiGet('/api/config'), loadLanInfo()]);
     }).then(function (arr) {
       var cfg = arr[0], lan = arr[1] || {};
       S.cfg = cfg;
       closeSettings();
+      // 电子书设置动过就把结果页重画：开关决定图标出不出现，跳转域名决定图标能不能点，
+      // 缓存的查询结果里没有链接，重画会按新配置再拉一次
+      if (availDirty) { S.avail = {}; renderBooks(); renderResult(); }
       // 拨过开关才提这一句：别的设备能不能连，是这次保存唯一看不见的后果
       if (wantLan !== hadLan) {
         if (wantLan && !lan.on) {
@@ -4550,6 +5197,12 @@
         toast('还没配 Web 服务 Key：距离和骑行用不了，在右上角设置里填', 'err');
       }
       loadLists(false);
+      // 借书单存服务端：开机先读一次，顶栏徽标和卡片按钮才有正确的选中态。
+      // 手机扫码（#borrow）进来时读完直接停在借书单对话框
+      paintBorrowBadge();
+      loadBorrow().catch(function () {}).then(function () {
+        if (location.hash === '#borrow') openBorrow();
+      });
       if (!S.spot) tryGeo();
     }).catch(function (e) {
       toast('本地服务没响应：' + e.message, 'err');
@@ -4575,8 +5228,12 @@
         var act = el.getAttribute('data-db-act');
         if (act === 'isbn') { openEdition(el); return; }
         if (act === 'ver-toggle') {
-          S.versOpen[book.id] = !S.versOpen[book.id];
-          paintVersions(book);
+          if (S.versOpen[book.id]) {
+            S.versOpen[book.id] = false;
+            paintVersions(book);
+          } else {
+            loadVersions(book);
+          }
           return;
         }
       }
@@ -4673,8 +5330,6 @@
       // 分段控件的宽度按文字撑出来，字体加载/缩放变化后要重新对位
       var ts = document.querySelector('.toolbar .seg');
       if (ts) placeSegThumb(ts);
-      var ms = $('mapSeg');
-      if (ms) placeSegThumb(ms);
     });
     measureHeader();
     if (window.ResizeObserver && $('bar')) {
@@ -4722,6 +5377,7 @@
     });
     bindSearch();
     bindSettingsModal();
+    bindBorrow();
   }
 
   // ---------------------------------------------------------------- 药丸检索
@@ -4823,6 +5479,23 @@
         }
       }
     });
+    // 电子书资源开关：同局域网开关，只翻本地状态，保存时才写配置
+    $('availToggle').addEventListener('click', function () {
+      var want = this.getAttribute('aria-pressed') !== 'true';
+      this.setAttribute('aria-pressed', want ? 'true' : 'false');
+      var saved = !!(S.cfg && S.cfg.availability && S.cfg.availability.enabled);
+      var stat = $('availStat');
+      if (stat) {
+        if (want === saved) {
+          stat.textContent = saved ? '已开启：书名旁会显示电子书入口'
+            : '未开启，不会向第三方发送任何信息';
+        } else {
+          stat.textContent = '保存后生效';
+        }
+      }
+      var opts = $('availOpts');
+      if (opts) opts.hidden = !want;
+    });
     // 换服务商必须同时换 Key：两家的 Key 不通用，只切下拉会让地理编码直接失败
     $('setProvider').addEventListener('change', function () {
       var cur = ((S.cfg || {}).geocode || {}).provider || 'amap';
@@ -4833,16 +5506,6 @@
         $('setKey').placeholder = '已保存（' + ((S.cfg || {}).geocode || {}).keyTail +
           '），留空不改';
       }
-    });
-
-    // 地图默认展开：点一下立刻切并记住，不用等「保存」（跟主题开关一样）。
-    // 走 toggleMap 复用淡出/淡入那套过渡，宽屏下当场看到地图开合；值与工具栏
-    // 那颗地图钮、localStorage 的 shlib.map 是同一个
-    Array.prototype.forEach.call(document.querySelectorAll('#mapSeg button'), function (b) {
-      b.addEventListener('click', function () {
-        if ((b.getAttribute('data-map-val') === '1') !== S.mapOn) toggleMap();
-        else syncMapSeg(S.mapOn);
-      });
     });
 
     $('settings').addEventListener('click', function (e) {

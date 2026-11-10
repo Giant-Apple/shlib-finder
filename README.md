@@ -1,4 +1,4 @@
-# 上图馆藏查询
+# 借得到
 
 > **非官方项目** · 与上海图书馆、豆瓣均无隶属或合作关系，仅供个人查询辅助使用。
 > 项目里的馆藏数据来自公开页面，界面标识归各自所有者，见 [THIRD-PARTY.md](THIRD-PARTY.md)。
@@ -10,7 +10,9 @@
 
 ![书架与书单](docs/feature/02-shelf-doulist.png)
 
-![手机版](docs/feature/03-phone.png)
+![借书单](docs/feature/03-borrow.png)
+
+![手机版](docs/feature/04-phone.png)
 
 ## 它做什么
 
@@ -25,9 +27,9 @@
 - **手机**：同一 Wi-Fi 下手机浏览器打开就能用，不用装 App；手机端只读，改配置还是回电脑。
 - **浏览器扩展**：不想开本地服务、只想在豆瓣页面上顺手看一眼这本书上海谁家有，
   装 [Microsoft Edge 加载项](https://microsoftedge.microsoft.com/addons/detail/%E4%B8%8A%E5%9B%BE%E9%A6%86%E8%97%8F%E6%9F%A5%E8%AF%A2/kpdbanjmlkfdaebckkjojfbaheojmjok)
-  里的侧边栏扩展「上图馆藏查询」（项目页 [shlib-finder-extension](https://github.com/Giant-Apple/shlib-finder-extension)）。
+  里的侧边栏扩展「借得到」（项目页 [shlib-finder-extension](https://github.com/Giant-Apple/shlib-finder-extension)）。
   Windows、macOS、Linux 都能装，不用 Python 和本地服务。
-  它没有书架、书单和地图，跟本地版各查各的，互不同步。
+  它没有书架和地图，借书单只存在本机；跟本地版各查各的，互不同步。
 
 ## 快速开始
 

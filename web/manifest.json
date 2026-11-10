@@ -1,6 +1,6 @@
 {
-  "name": "上图馆藏查询",
-  "short_name": "上图馆藏",
+  "name": "借得到",
+  "short_name": "借得到",
   "description": "读豆瓣书单，按距离查上海图书馆各分馆的实时可借状态",
   "start_url": "./",
   "scope": "./",
