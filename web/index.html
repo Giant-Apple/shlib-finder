@@ -15,6 +15,7 @@
 <meta name="apple-mobile-web-app-title" content="借得到">
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14171a">
+<meta name="color-scheme" content="light dark">
 <script>
   /* 在 CSS 之前定好主题，避免暗色下先闪一下白底 */
   (function () {
@@ -27,6 +28,9 @@
       t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
     document.documentElement.setAttribute('data-theme', t);
+    /* 首帧画布、原生控件在 CSS 到达前就按这套配色走 */
+    var cs = document.querySelector('meta[name="color-scheme"]');
+    if (cs) cs.content = t;
   })();
 </script>
 <link rel="stylesheet" href="style.css">
@@ -123,16 +127,16 @@
         在其他设备上打开时，设置是只读的：可以查书、查看结果；改设置请回到运行服务的那台电脑。
       </div>
 
-      <!-- 豆瓣地址：豆列和想读可以只填一个，也可以都填 -->
+      <!-- 豆瓣地址：书单和想读可以只填一个，也可以都填 -->
       <div class="grp">豆瓣地址</div>
 
       <div class="field">
-        <label for="setDoulist">豆列网址</label>
+        <label for="setDoulist">书单网址</label>
         <div class="row">
           <input id="setDoulist" placeholder="https://www.douban.com/doulist/xxxx/">
           <!-- 地址没改也想重读时用：先存这一节的地址，再跳过缓存重新抓豆瓣 -->
           <button type="button" class="sm icon-btn" id="doulistRefresh"
-                  title="重新读取豆瓣数据（先保存这一节的地址）" aria-label="重新读取豆列">
+                  title="重新读取豆瓣数据（先保存这一节的地址）" aria-label="重新读取书单">
             <i data-icon="refresh"></i>
           </button>
         </div>

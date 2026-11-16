@@ -138,11 +138,27 @@
   }
 
   .shot {
+    display: block; width: 100%; padding: 0; font: inherit;
     border-radius: 22px; overflow: hidden; background: #fff;
     border: 1px solid rgba(255, 255, 255, .9);
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow); cursor: zoom-in;
   }
+  .shot:hover { border-color: var(--brand-line); }
   .shot img { width: 100%; }
+
+  .zoom {
+    width: auto; max-width: 96vw; max-height: 92vh; padding: 0;
+    border: 0; border-radius: 12px; background: transparent;
+    overflow: visible; cursor: zoom-out;
+  }
+  /* 模态打开时滚轮不再滚动背后的页面：对话层自己截住，背景层也变成不滚的滚动容器 */
+  .zoom:modal { overscroll-behavior: contain; }
+  .zoom::backdrop { overflow: hidden; overscroll-behavior: contain; background: rgba(8, 24, 33, .78); }
+  .zoom img {
+    display: block; width: auto; height: auto;
+    max-width: 96vw; max-height: 92vh;
+    border-radius: 12px; box-shadow: 0 30px 80px rgba(0, 0, 0, .4);
+  }
 
   /* ---------------------------------------------------------------- 通用区块 */
 
@@ -219,6 +235,19 @@
   .faq .a { padding: 0 0 16px; color: var(--ink-2); font-size: 14.5px; }
   .faq .a p { margin: 0 0 10px; }
   .faq .a p:last-child { margin-bottom: 0; }
+  /* 展开/收起从 0 长到自然高度，不再瞬间跳高；不支持的浏览器照旧直接展开 */
+  @supports (interpolate-size: allow-keywords) {
+    .faq details { interpolate-size: allow-keywords; }
+    .faq details::details-content {
+      block-size: 0; overflow: clip; content-visibility: hidden;
+      transition: block-size .2s ease, content-visibility .2s;
+      transition-behavior: allow-discrete;
+    }
+    .faq details[open]::details-content { block-size: auto; content-visibility: visible; }
+    @media (prefers-reduced-motion: reduce) {
+      .faq details::details-content { transition: none; }
+    }
+  }
 
   /* ---------------------------------------------------------------- 页脚 */
 
@@ -332,10 +361,11 @@
           </p>
         </div>
         <div>
-          <div class="shot">
+          <button class="shot" type="button" id="shotBtn" aria-label="放大查看界面截图" title="点开看大图">
             <img src="feature/01-hero.jpg" width="1600" height="1030"
+                 fetchpriority="high" decoding="async"
                  alt="借得到界面：左侧是书架，中间是某一本书在各馆的在架数量与距离，右侧是标出各馆位置的地图。">
-          </div>
+          </button>
         </div>
       </div>
 
@@ -466,6 +496,12 @@ cd shlib-finder
           </summary>
           <div class="a"><p>可以。源码公开，按 PolyForm Noncommercial 1.0.0 发布，个人和非商业用途免费。</p></div>
         </details>
+        <details>
+          <summary>还想知道什么？
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="a"><p>这里没写到的，或者想提新功能、报个问题，去 <a href="https://github.com/Giant-Apple/shlib-finder/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a> 留言；别人问过的问题也在那里。</p></div>
+        </details>
       </div>
     </div>
   </section>
@@ -489,6 +525,21 @@ cd shlib-finder
     </p>
   </div>
 </footer>
+
+<dialog class="zoom" id="zoomShot" aria-label="界面截图大图">
+  <img src="feature/01-hero.jpg" width="1600" height="1030"
+       alt="借得到界面大图：左侧是书架，中间是各馆在架数量与距离，右侧是标出各馆位置的地图。">
+</dialog>
+
+<script>
+  (function () {
+    var btn = document.getElementById('shotBtn');
+    var dlg = document.getElementById('zoomShot');
+    if (!btn || !dlg || !dlg.showModal) return;
+    btn.addEventListener('click', function () { dlg.showModal(); });
+    dlg.addEventListener('click', function () { dlg.close(); });
+  })();
+</script>
 
 </body>
 </html>

@@ -205,11 +205,9 @@
     // 电子书有无（/api/availability）的内存缓存：键是 ISBN，值 { data } 或 { busy }。
     // 书架行滚进视野才按需查；命中才画 zlib/anna 入口，没有就空着（不占位、不暗示）
     avail: {},
-    // 渐进披露的两处展开态（都不落盘，刷新即回收）：
+    // 渐进披露的展开态（不落盘，刷新即回收）：
     //   versOpen: 书 id -> 是否展开「本书其他版本」列表（默认收起，只留一颗胶囊，点开才抓）
-    //   footOpen: 馆名 -> 是否展开卡片第三行（索书号 / 库室）
     versOpen: {},
-    footOpen: {},
     lanInfo: null,    // /api/lan-qr 的最近结果：设置面板的开关和二维码都按它画
     // 馆评分：云端聚合快照。ok=false 时整块不画（读不到就不暗示有这项数据）
     ratings: { ok: false, libs: {}, at: 0 },
@@ -1066,6 +1064,8 @@
   // 亮色/暗色只切 html[data-theme]，具体配色全在 style.css 的变量里
   function applyTheme(t, persist) {
     document.documentElement.setAttribute('data-theme', t);
+    var cs = document.querySelector('meta[name="color-scheme"]');
+    if (cs) cs.content = t;
     if (persist !== false) lsSet('shlib.theme', t);
     // 头部那颗开关：图标画的是「现在是什么」，tooltip 说的是「点了会变成什么」。
     var tb = $('themeBtn');
@@ -1651,7 +1651,7 @@
   function loadList(kind, refresh, more) {
     var st = S.lists[kind];
     if (!st) return Promise.resolve();
-    var noun = kind === 'wish' ? '想读' : '豆列';
+    var noun = kind === 'wish' ? '想读' : '书单';
     if (more) {
       st.more = true;
     } else {
@@ -1929,7 +1929,7 @@
     // 以前这一组整个跳过，只在书架全空时露出「设置豆瓣地址」——手动加过一本书之后，
     // 那两个入口就都没了（2026-10-28 用户报）。整块空态在上面已经 return，不会画两排空标题
     function listGroup(kind, st, books, dupNote) {
-      var noun = kind === 'wish' ? '想读' : '豆列';
+      var noun = kind === 'wish' ? '想读' : '书单';
       // 组标题只留收起箭头：地址填一次就不动，日常用不上「改地址」。
       // 填错的时候下面的「去设置」就在手边；平时改地址走设置面板的豆瓣地址一节
       var g = shelfHeadHTML(
@@ -1986,7 +1986,7 @@
     listGroup('doulist', dou, dou.books, '');
     // 想读里跟豆列重复的那几本没有单独画出来，说一声它们去哪了，免得以为丢了
     listGroup('wish', wish, wishBooks,
-      wishDup ? '另有 ' + wishDup + ' 本已在豆列里，不重复列出。' : '');
+      wishDup ? '另有 ' + wishDup + ' 本已在书单里，不重复列出。' : '');
     // 插入这一帧先关掉 .book 的 background 过渡：这一块是整块重画的，指针底下那本书
     // 每重画一次都会从透明淡到 hover 色，一次进入页面会重画两三次，看着就是「一闪一闪」。
     // 两帧后放开，指针真正移到别的书上时照旧淡入
@@ -4269,7 +4269,8 @@
   }
 
   function cardHTML(p, idx, book) {
-    // 三行封顶：① 序号 + 馆名 + 拨号/导航 + 距离 ② 可借/开放/借阅类型 + 右端骑行用时 ③ 索书号 + 库室
+    // 默认两行：① 序号 + 馆名 + 距离（可点导航） ② 可借/开放/借阅类型 + 右端骑行用时
+    // 索书号/库室和加入借书单在第三行，桌面悬停或聚焦时原位展开，触屏常驻
     // 区字段（p.zone）现在只在匹配分馆时用，不再上屏
     var badges = [];
     badges.push(availBadgeHTML(p));
@@ -4278,33 +4279,26 @@
     badges.push(kindTagsHTML(p, S.filter !== 'all'));
 
     // 索书号可能很长（版次 + 复本号），屏幕上会截断成省略号，
-    // 所以 title 里带全文：鼠标停上去能看全，点了复制的也永远是全文
+    // 所以 title 里带全文：鼠标停上去能看全，点了复制的也永远是全文。
+    // 用 <button> 而不是 <span>：整行默认收着，键盘 Tab 到它时 :focus-within 会把行展开
     var callnos = p.callnos.map(function (c) {
-      return '<span class="callno" data-copy="' + esc(c) + '" title="' + esc(c) + '（点击复制）">' + esc(c) + '</span>';
+      return '<button type="button" class="callno" data-copy="' + esc(c) + '"' +
+        ' title="' + esc(c) + '（点击复制）" aria-label="复制索书号 ' + esc(c) + '">' +
+        esc(c) + '</button>';
     }).join('');
 
     // 地址不再铺在卡片上（列表里最长、最占地方，真正要用的人是站在馆门口导航过去的）。
-    // 电话和导航收成两个图标：点电话直接拨号（tel:），点箭头直接发起导航（高德 URI，手机会拉起 App）
-    var acts = [];
-    if (p.tel) {
-      var dial = dialNo(p.tel);
-      if (dial) {
-        acts.push('<a class="ico" href="tel:' + dial + '" title="拨打 ' + esc(p.tel) + '"' +
-          ' aria-label="拨打 ' + esc(p.tel) + '">' + ICON_TEL + '</a>');
-      }
-    }
+    // 距离文字就是导航入口：有坐标走高德导航，没坐标的馆（网借中心之类）按地址搜。
+    var navHref = '';
+    var navTitle = '';
     if (p.lat != null && p.lng != null) {
-      acts.push('<a class="ico" href="https://uri.amap.com/navigation?to=' + p.lng + ',' + p.lat + ',' +
-        encodeURIComponent(p.display) + '&mode=car&coordinate=gaode&callnative=1"' +
-        ' target="_blank" rel="noreferrer" title="导航到 ' + esc(p.display) + '"' +
-        ' aria-label="导航到 ' + esc(p.display) + '">' + ICON_NAV + '</a>');
+      navHref = 'https://uri.amap.com/navigation?to=' + p.lng + ',' + p.lat + ',' +
+        encodeURIComponent(p.display) + '&mode=car&coordinate=gaode&callnative=1';
+      navTitle = '导航到 ' + p.display;
     } else if (p.address) {
-      // 没坐标的馆（网借中心之类）没有目的地，只能按地址在地图上搜
-      acts.push('<a class="ico" href="https://uri.amap.com/search?keyword=' + encodeURIComponent(p.address) +
-        '" target="_blank" rel="noreferrer" title="在地图上搜 ' + esc(p.address) + '"' +
-        ' aria-label="在地图上搜 ' + esc(p.address) + '">' + ICON_NAV + '</a>');
+      navHref = 'https://uri.amap.com/search?keyword=' + encodeURIComponent(p.address);
+      navTitle = '在地图上搜 ' + p.address;
     }
-    var actsHTML = acts.length ? '<span class="acts">' + acts.join('') + '</span>' : '';
 
     // 骑行用时：挂在第二行最右（margin-left:auto），正好落在第一行「距离」的下方——
     // 「多远」和「多久」竖着对成一列，读起来是一组。先留空容器，算好再填（空时 display:none）
@@ -4321,19 +4315,10 @@
       : '';
 
     // 索书号和库室是「站到架子跟前才用」的信息，几十张卡逐行铺开只会把「哪家能借」推远。
-    // 默认收成一枚「索书号 · 库室 ▾」：点一下钉住展开，桌面鼠标停在卡上也临时给全。
-    // 第三行常驻：右边那颗「加入借书单」跟左边共用一行，没有索书号/库室的馆也能加入
-    var fKey = p.name || p.display;
-    var fOpen = !!S.footOpen[fKey];
-    var tgl = (callnos || rooms)
-      ? '<button type="button" class="foot-tgl" data-foot-toggle="' + esc(fKey) + '"' +
-        ' aria-expanded="' + (fOpen ? 'true' : 'false') + '">索书号 · 库室' +
-        icon('chevron-down') + '</button>'
-      : '';
+    // 桌面默认收起整行，悬停或聚焦时原位展开；触屏没有悬停，整行常驻。
+    // 行里直接写具体索书号和库室，不再用「索书号 · 库室」这种占位字样
     var body = (callnos || rooms)
-      ? '<div class="foot-body">' +
-        (callnos ? '<span class="callnos">' + callnos + '</span>' : '') +
-        rooms + '</div>'
+      ? (callnos ? '<span class="callnos">' + callnos + '</span>' : '') + rooms
       : '';
 
     // 只有「这家馆现在有在架册」才给加入：借书单记的是这次去能拿到的书+馆+索书号，
@@ -4342,7 +4327,7 @@
       S.cfg.features && S.cfg.features.borrow && p.available > 0);
     var bOn = canBorrow && !!borrowFind(book, p);
     var borrowBtn = canBorrow
-      ? '<button type="button" class="foot-tgl borrow-add' + (bOn ? ' on' : '') + '"' +
+      ? '<button type="button" class="borrow-add' + (bOn ? ' on' : '') + '"' +
         ' data-borrow-key="' + esc(borrowEntryKey(book, p)) + '"' +
         ' data-borrow-idx="' + idx + '"' +
         ' aria-pressed="' + (bOn ? 'true' : 'false') + '"' +
@@ -4351,9 +4336,8 @@
         icon('bookmark-plus', 'ic-add') + icon('check', 'ic-on') +
         '<span class="borrow-add-lbl">' + (bOn ? '已在借书单' : '加入借书单') + '</span></button>'
       : '';
-    var foot = (tgl || borrowBtn)
-      ? '<div class="foot' + (fOpen ? ' open' : '') + '">' +
-        '<div class="foot-row">' + tgl + borrowBtn + '</div>' + body + '</div>'
+    var foot = (body || borrowBtn)
+      ? '<div class="foot"><div class="foot-body">' + body + borrowBtn + '</div></div>'
       : '';
 
     // 序号跟地图上的标记一一对应。没坐标的馆地图上没标记，给它编号只会让人对不上，干脆不编。
@@ -4363,9 +4347,14 @@
     var no = (hasPin && canMap() && (S.mapOn || window.innerWidth < MAP_BG_MIN))
       ? '<span class="idx" title="对应地图上的 ' + (idx + 1) + ' 号标记">' + (idx + 1) + '</span>' : '';
 
-    // 第一行右侧一簇：拨号/导航 → 距离（骑行用时已挪到第二行右端，见 rides 的注释）
+    // 第一行右侧只剩距离：它本身就是导航入口（见上），骑行用时在第二行右端
+    var distTxt = p.distanceText || '距离未知';
     var distHTML = '<span class="dist' + (p.distanceText ? '' : ' none') + '">' +
-      (p.distanceText || '距离未知') + '</span>';
+      (navHref
+        ? '<a class="dist-link" href="' + esc(navHref) + '" target="_blank" rel="noreferrer"' +
+          ' title="' + esc(navTitle) + '" aria-label="' + esc(navTitle) + '">' + esc(distTxt) + '</a>'
+        : esc(distTxt)) +
+      '</span>';
 
     // with-idx：有徽标时第二三行才补 26px 左padding 跟馆名对齐（见 style.css）。
     // 地图折叠 / 无坐标馆不渲染徽标，馆名贴左沿，这两行也跟着贴齐。
@@ -4376,7 +4365,7 @@
       (hasPin ? ' data-idx="' + idx + '"' : '') + '>' +
       '<div class="row1">' + no + '<span class="name">' + esc(p.display) + '</span>' +
       voteHTML(p) +
-      '<span class="rside">' + actsHTML + distHTML + '</span></div>' +
+      '<span class="rside">' + distHTML + '</span></div>' +
       '<div class="meta"><div class="badges">' + badges.join('') + '</div>' + rides + '</div>' +
       foot +
       '</div>';
@@ -4433,6 +4422,9 @@
         qTimer = setTimeout(paintFiltered, 160);
       });
       fq.addEventListener('keydown', function (e) {
+        // 合成中的回车/Esc 是交给输入法确认或取消候选词的，不能当成搜索操作：
+        // 否则回车会按旧关键词重绘、Esc 会顺手清空输入框
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Escape' && S.q) {
           e.preventDefault();
           S.q = '';
@@ -4469,25 +4461,11 @@
       if (rq) rq.addEventListener('click', requeryActive);
     });
 
-    // 点卡片 → 地图飞过去。导航链接、索书号和「索书号 · 库室」展开钮各有自己的动作，别抢
+    // 点卡片 → 地图飞过去。导航链接、索书号复制和加入借书单各有自己的动作，别抢
     Array.prototype.forEach.call(document.querySelectorAll('.card[data-idx]'), function (c) {
       c.addEventListener('click', function (e) {
-        if (e.target.closest && e.target.closest('a, .callno, .foot-tgl')) return;
+        if (e.target.closest && e.target.closest('a, .callno, .borrow-add')) return;
         focusPlace(parseInt(c.getAttribute('data-idx'), 10));
-      });
-    });
-
-    // 展开第三行：只翻一个类，不重绘结果区（重绘会丢掉滚动位置和地图视角）
-    Array.prototype.forEach.call(document.querySelectorAll('[data-foot-toggle]'), function (b) {
-      b.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var key = b.getAttribute('data-foot-toggle');
-        var open = !S.footOpen[key];
-        S.footOpen[key] = open;
-        // 按钮现在在 .foot-row 里，展开态要加到外层 .foot 上
-        var foot = b.closest('.foot');
-        if (foot) foot.classList.toggle('open', open);
-        b.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
     });
 
@@ -4506,6 +4484,14 @@
         (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject())
           .then(function () { toast('已复制索书号 ' + t, 'ok'); })
           .catch(function () { toast('复制失败，请手动选：' + t, 'err'); });
+      });
+    });
+
+    // 鼠标点距离去导航后，链接自己拿到的焦点会让 :focus-within 把第三行一直撑着
+    // （鼠标移开也不收）。鼠标点击后主动还掉焦点；键盘回车（detail 为 0）保留焦点
+    Array.prototype.forEach.call(document.querySelectorAll('.card .dist-link'), function (a) {
+      a.addEventListener('click', function (e) {
+        if (e.detail > 0) a.blur();
       });
     });
   }

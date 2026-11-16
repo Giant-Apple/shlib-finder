@@ -1384,7 +1384,7 @@ html[data-theme="dark"] .res-head .avail-mark:hover img { background: #fff; }
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  height: var(--ctl);
   margin: 10px 0;
   padding: 0 12px;
   border: 1px solid var(--line);
@@ -1392,6 +1392,8 @@ html[data-theme="dark"] .res-head .avail-mark:hover img { background: #fff; }
   background: var(--panel-solid);
   transition: border-color .14s, box-shadow .14s;
 }
+/* 跟工具栏那排同一档高度：桌面 32、手机 36，不再夹在中间 */
+@media (min-width: 641px) { .fsearch { height: var(--ctl-sm); } }
 .fsearch:focus-within {
   border-color: var(--brand-line);
   box-shadow: 0 0 0 3px var(--brand-soft);
@@ -1782,6 +1784,9 @@ button.icon-btn.on:hover:not(:disabled) {
   position: fixed;
   inset: 0;
   z-index: 55;
+  /* 整屏遮罩也是一层「不滚的滚动容器」：滚轮到这里就停，不再往背后的页面上传 */
+  overflow: hidden;
+  overscroll-behavior: contain;
   background: var(--bg);
   opacity: 0;
   visibility: hidden;
@@ -1977,7 +1982,7 @@ button.icon-btn.on:hover:not(:disabled) {
   to { transform: scaleY(1); opacity: 1; }
 }
 
-/* 第一行：编号 + 馆名 +（右侧一簇：动作图标 · 用时 · 距离） */
+/* 第一行：编号 + 馆名 +（右侧：距离，点击即导航） */
 .card .row1 { display: flex; align-items: center; gap: 8px; }
 /* 右侧那一簇整块推到行尾：馆名再长也只是自己截断，不会把这一簇挤散 */
 .card .rside {
@@ -2042,26 +2047,7 @@ button.icon-btn.on:hover:not(:disabled) {
 /* 名字自己截断，赞数不被挤走；-3px 抵掉 row1 的 8px 间距，视觉上离名字 5px */
 .card .row1 .vote { margin-left: -3px; }
 
-/* 拨号 / 导航：两个图标按钮（推右的活儿交给外层 .rside）。
-   字形收在 14px：16px 的图标比同排 13px/600 的馆名还抢眼；可点区桌面 26px，
-   够得着但不占横向空间——第一行还要放馆名、距离和骑行用时（触屏见下面补回 30px） */
-.card .acts {
-  display: flex; align-items: center; gap: 2px;
-  flex: none;
-}
-.card .acts a {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
-  border-radius: 999px;
-  color: var(--ink-3);
-  text-decoration: none;
-}
-.card .acts a:hover { background: var(--hover); color: var(--brand); }
-.card .acts a:active { background: var(--brand-soft); }
-.card .acts a:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
-.card .acts .ic { width: 14px; height: 14px; }
-
-/* 距离：普通的次要信息，不加粗不上色 */
+/* 距离：普通的次要信息，不加粗不上色；它同时是导航入口，悬停才用品牌色 + 下划线 */
 .card .dist {
   flex: none;
   font-size: 12px;
@@ -2071,6 +2057,10 @@ button.icon-btn.on:hover:not(:disabled) {
   font-weight: 400;
 }
 .card .dist.none { color: var(--ink-3); }
+.card .dist-link { color: inherit; text-decoration: none; }
+.card .dist-link:hover,
+.card .dist-link:focus-visible { color: var(--brand); text-decoration: underline; }
+.card .dist-link:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 2px; border-radius: 3px; }
 
 /* 第二行：一整句灰字「可借 · 营业 · 索书号 · 库室」。
    .badges / .foot / .callnos 都是真实的小格子，组内组间用同一条 · 规则连起来 */
@@ -2082,8 +2072,10 @@ button.icon-btn.on:hover:not(:disabled) {
   color: var(--ink-3);
   min-width: 0;
 }
-/* 第三排：索书号 + 阅览室。默认收起（渐进披露，见 app.js 的 cardHTML），
-   .foot 是外壳、.foot-tgl 是那枚永远在的展开钮、.foot-body 才是真正的内容行 */
+/* 第三排：索书号 + 阅览室 + 加入借书单。桌面默认整行收起（不占高度），
+   悬停 / 键盘聚焦时原位展开；触屏没有 hover，整行常驻。
+   收起用 height:0 + overflow:hidden，而不是 display:none：里面的索书号按钮仍在
+   Tab 顺序里，聚焦到它时 :focus-within 会立刻把整行展开 */
 .card .foot {
   display: block;
   margin-top: 0;
@@ -2091,33 +2083,23 @@ button.icon-btn.on:hover:not(:disabled) {
   color: var(--ink-3);
   min-width: 0;
 }
-.card .foot-tgl {
-  display: inline-flex; align-items: center; gap: 4px;
-  /* 同上：不吃全局 button 的 36px 定高，否则收起态反而把每张卡垫高 */
-  height: auto;
-  padding: 1px 6px 1px 4px;
-  border: 0; border-radius: 5px;
-  background: none;
-  font: inherit; font-size: 11px; line-height: 1.5;
-  color: var(--ink-3);
-  cursor: pointer;
-  transition: background .12s, color .12s;
-}
-.card .foot-tgl:hover { background: var(--hover); color: var(--ink-2); }
-.card .foot-tgl:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
-.card .foot-tgl .ic { width: 11px; height: 11px; transition: transform .15s; }
-.card .foot.open .foot-tgl[data-foot-toggle] .ic { transform: rotate(180deg); }
-/* 内容行：收起时不占位；桌面有 hover 的话，鼠标停在卡上就临时给全（触屏没有 hover，
-   靠上面那枚按钮展开）。两条路都不改动数据，只改可见性 */
+/* 内容行：直接铺具体索书号和库室，加入借书单靠 margin-left:auto 贴行尾。
+   强制单行：库室超长时自己省略，不把「加入借书单」挤到下一行 */
 .card .foot-body {
-  display: none;
-  flex-wrap: wrap; align-items: center;
-  row-gap: 4px;
+  display: flex;
+  flex-wrap: nowrap; align-items: center;
   min-width: 0;
 }
-.card .foot.open .foot-body { display: flex; }
 @media (hover: hover) {
-  .card:hover .foot-body { display: flex; }
+  .card .foot {
+    height: 0; overflow: hidden;
+    opacity: 0; pointer-events: none;
+  }
+  .card:hover .foot,
+  .card:focus-within .foot {
+    height: auto; overflow: visible;
+    opacity: 1; pointer-events: auto;
+  }
 }
 /* 左沿对齐只跟「有没有序号」走：有 .idx 时馆名被 18px 宽的序号 + 8px 间距推到 26px，
    这两行补 26px 跟馆名齐；没序号（地图折叠 / 无坐标馆）时馆名贴卡片左沿，
@@ -2137,7 +2119,6 @@ button.icon-btn.on:hover:not(:disabled) {
    margin 直接给在伪元素上（不是 flex gap），换行时 | 才不会跑到行首去 */
 .card .meta > * + *::before,
 .card .badges > * + *::before,
-.card .foot-body > * + *::before,
 .card .callnos > * + *::before {
   content: "|";
   margin: 0 7px;
@@ -2257,10 +2238,12 @@ button.icon-btn.on:hover:not(:disabled) {
 }
 .card .foot .callno:hover { color: var(--brand); background: none; }
 .card .foot .callno:active { color: var(--brand); background: none; }
+.card .foot .callno:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 2px; border-radius: 3px; }
 
 /* 库室：第三行右边的阅览室名，跟索书号一样限宽截断（长馆室名会把卡片撑宽）。
    有可借册时跟索书号同色；都已借出才退回淡一档 */
 .card .foot .rooms {
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
   font-size: 12px;
@@ -2270,6 +2253,10 @@ button.icon-btn.on:hover:not(:disabled) {
   text-overflow: ellipsis;
 }
 .card:not(.out) .foot .rooms { color: var(--ink-2); }
+/* 库室跟索书号之间用间距分开，不用竖线：竖线会孤零零挂在行首。
+   索书号不参与收缩，压缩的余地全留给库室 */
+.card .foot .callnos { flex: 0 0 auto; }
+.card .foot-body > .callnos + .rooms { margin-left: 8px; }
 
 /* ---------------------------------------------------------------- 设置面板 */
 
@@ -2612,6 +2599,9 @@ html[data-theme="dark"] .settings .x:hover { box-shadow: 0 2px 10px rgba(0, 0, 0
   position: fixed;
   inset: 0;
   z-index: 60;
+  /* 同上：遮罩吃掉滚轮，弹窗打开时背后的页面不动 */
+  overflow: hidden;
+  overscroll-behavior: contain;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2828,9 +2818,7 @@ html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
 
 /* 单列（窄窗口 / 手机）：改成整页一起滚。只有结果区自己滚的话，书单区永远钉在顶上，
    翻的时候得在一小块里抠着划。整页滚，让位放在 body 上，滚走就滚走了 */
-/* 面板窄时第一行右侧那簇会顶掉馆名：用时先让位（导航图标照样能带过去） */
-/* 骑行用时原来在 ≤1100px 整体隐藏（挂在第一行挤），挪到第二行后窄屏照样显示，
-   第二行本来就是可换行的灰字行 */
+/* 面板窄时第一行右侧只剩距离；骑行用时挂在第二行右端，窄屏照样显示 */
 
 @media (max-width: 860px) {
   /* 高度改成 auto 才能整页滚；背景铺在 html 上，内容不满一屏时底下不会露白 */
@@ -2848,20 +2836,24 @@ html[data-theme="dark"] .dlg .dlg-box { background: rgba(24, 28, 34, .94); }
 
 /* ---------------------------------------------------------------- 借书单 */
 
-/* 第三行：左边「索书号 · 库室」，右边「加入借书单」。两颗钮共用 .foot-tgl 的字号，
+/* 第三行：左边具体索书号 + 库室，右边「加入借书单」。
    加入钮靠 margin-left:auto 贴到行尾；没有索书号/库室的馆，行里只剩右边这颗 */
-.card .foot-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
 .card .borrow-add {
+  display: inline-flex; align-items: center; gap: 4px;
+  /* 不吃全局 button 的 36px 定高，否则收起态反而把每张卡垫高 */
+  height: auto;
   margin-left: auto;
   flex: none;
-  gap: 4px;
-  padding-right: 4px;
+  padding: 1px 4px;
+  border: 0; border-radius: 5px;
+  background: none;
+  font: inherit; font-size: 11px; line-height: 1.5;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background .12s, color .12s;
 }
+.card .borrow-add:hover { background: var(--hover); color: var(--ink-2); }
+.card .borrow-add:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 0; }
 .card .borrow-add .ic { width: 12px; height: 12px; transition: none; }
 .card .borrow-add .ic-on { display: none; }
 .card .borrow-add.on { color: var(--brand); }
@@ -3170,30 +3162,24 @@ button.danger-ghost.armed:hover:not(:disabled) { background: var(--err); }
      窄屏干脆不用分隔点，改回纯间距，折到哪一行都干净 */
   .card .meta > * + *::before,
   .card .badges > * + *::before,
-  .card .foot-body > * + *::before,
   .card .callnos > * + *::before { content: none; margin: 0; }
   .card .meta,
   .card .badges,
-  .card .foot-body,
   .card .foot .callnos { column-gap: 8px; }
 
-  /* 卡片：第一行「序号 馆名 拨号/导航 距离」，第二行「标签 …… 骑行用时」。
+  /* 卡片：第一行「序号 馆名 距离」，第二行「标签 …… 骑行用时」。
      用时挪到第二行后，第一行只剩馆名一处需要抢宽度，390px 下也能有十来个字。
-     第三行默认收起，触屏没有 hover，靠「索书号 · 库室」那枚按钮展开。
+     第三行在触屏上常驻（没有 hover 可等），桌面才默认收起、悬停展开。
      行与行之间隔着 12px 间距（卡片自己的 margin-bottom），底色要连这段一起盖：
      第二行起上沿多让 12px，于是被点中的那行从上一道分隔线铺到自己那道，
      行首不会在空隙里露一条白 */
   .card { padding: 8px; margin-bottom: 12px; }
   .card + .card { --seat-up: 12px; }
   .card .row1 { gap: 8px; }
-  .card .acts { gap: 0; }
-  /* 桌面收到 26px 的那两枚，触屏补回 30px：手指点得着的下限比省纵向空间优先 */
-  .card .acts a { width: 30px; height: 30px; }
   .card .meta { margin-top: 4px; }
-  .card .foot-body { flex-wrap: wrap; row-gap: 4px; }
   .card .foot .callnos { max-width: 100%; flex-wrap: wrap; }
-  /* 桌面 18px 的胶囊当文字链正好，触屏点不准——两枚展开钮在手机上补到 32px */
-  .card .foot-tgl,
+  /* 桌面 18px 的胶囊当文字链正好，触屏点不准——加入借书单在手机上补到 32px */
+  .card .borrow-add,
   .db-vers-head { min-height: 32px; }
 
   /* 设置面板：手机上从底部升起，别在中间留一圈缝 */
