@@ -6,13 +6,13 @@
 把豆瓣豆列、「想读」和手动添加的书放在一起，查**上海图书馆及全市分馆的实时在架状态**，
 按离你的远近排序，并标在地图上。自己用，数据只留在本地。
 
-![地图与馆藏](docs/feature/01-map-holdings.png)
+![地图与馆藏](docs/feature/01-map-holdings.png?v=0.3.1)
 
-![书架与书单](docs/feature/02-shelf-doulist.png)
+![书架与书单](docs/feature/02-shelf-doulist.png?v=0.3.1)
 
-![借书单](docs/feature/03-borrow.png)
+![借书单](docs/feature/03-borrow.png?v=0.3.1)
 
-![手机版](docs/feature/04-phone.png)
+![手机版](docs/feature/04-phone.png?v=0.3.1)
 
 ## 它做什么
 
